@@ -15,7 +15,7 @@
 
 static const char *TAG = "tts_player";
 
-#define TTS_BUFFER_SIZE (32 * 1024)  // 32KB buffer for audio chunks
+#define TTS_BUFFER_SIZE (128 * 1024)  // 128KB buffer for audio chunks
 #define TTS_QUEUE_SIZE 10
 #define PCM_BUFFER_SIZE (MAX_NCHAN * MAX_NSAMP * 2)  // Max PCM output per frame
 
@@ -46,6 +46,11 @@ static esp_err_t play_mp3_buffer(uint8_t *mp3_data, size_t mp3_size)
     }
 
     ESP_LOGI(TAG, "Decoding MP3: %d bytes", mp3_size);
+
+    // Ensure codec is unmuted for playback
+    extern esp_err_t bsp_extra_codec_mute_set(bool enable);
+    bsp_extra_codec_mute_set(false);
+    ESP_LOGI(TAG, "Codec unmuted for TTS playback");
 
     // PCM output buffer
     int16_t *pcm_buffer = (int16_t *)malloc(PCM_BUFFER_SIZE);
@@ -85,8 +90,10 @@ static esp_err_t play_mp3_buffer(uint8_t *mp3_data, size_t mp3_size)
             static int last_sample_rate = 0;
             if (frame_info.samprate != last_sample_rate) {
                 ESP_LOGI(TAG, "Setting codec to %d Hz", frame_info.samprate);
-                bsp_extra_codec_set_fs(frame_info.samprate, 16,
-                                       (i2s_slot_mode_t)frame_info.nChans);
+                // Use open-only function to avoid closing already-closed channels
+                extern esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
+                bsp_extra_codec_open_playback(frame_info.samprate, 16,
+                                              (i2s_slot_mode_t)frame_info.nChans);
                 last_sample_rate = frame_info.samprate;
             }
 
@@ -141,6 +148,14 @@ static void playback_task(void *arg)
                 // Play accumulated buffer if we have data
                 if (tts_buffer_pos > 0) {
                     ESP_LOGI(TAG, "Playing TTS audio: %d bytes MP3", tts_buffer_pos);
+
+                    // Stop audio capture to free I2S channel for playback
+                    extern void audio_capture_stop(void);
+                    audio_capture_stop();
+                    ESP_LOGI(TAG, "Audio capture stopped - I2S freed for TTS playback");
+
+                    // Small delay to ensure I2S is fully released
+                    vTaskDelay(pdMS_TO_TICKS(50));
 
                     // Decode and play MP3 buffer
                     esp_err_t ret = play_mp3_buffer(tts_buffer, tts_buffer_pos);

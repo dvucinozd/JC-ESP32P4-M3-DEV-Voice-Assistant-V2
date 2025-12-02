@@ -1,9 +1,12 @@
 /**
  * Audio Capture Implementation
  * Uses BSP board I2S functions to read from ES8311 microphone
+ * With VAD (Voice Activity Detection) support
  */
 
 #include "audio_capture.h"
+#include "vad.h"
+#include "config.h"
 #include "bsp_board_extra.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -15,7 +18,10 @@ static const char *TAG = "audio_capture";
 
 static TaskHandle_t capture_task_handle = NULL;
 static audio_capture_callback_t capture_callback = NULL;
+static audio_capture_vad_callback_t vad_callback = NULL;
 static bool is_capturing = false;
+static bool vad_enabled = false;
+static vad_handle_t vad_handle = NULL;
 
 /**
  * Capture task - continuously reads audio from I2S using BSP functions
@@ -29,9 +35,11 @@ static void capture_task(void *arg)
         return;
     }
 
-    ESP_LOGI(TAG, "Capture task started");
+    ESP_LOGI(TAG, "Capture task started (VAD: %s)", vad_enabled ? "enabled" : "disabled");
 
     int chunk_count = 0;
+    bool speech_detected = false;
+
     while (is_capturing) {
         size_t bytes_read = 0;
 
@@ -42,14 +50,48 @@ static void capture_task(void *arg)
                                            portMAX_DELAY);
 
         if (ret == ESP_OK && bytes_read > 0) {
-            // Debug: Check if audio has any non-zero samples
-            if (chunk_count % 10 == 0) {  // Log every 10th chunk
-                int non_zero = 0;
-                for (int i = 0; i < CAPTURE_BUFFER_SIZE; i++) {
-                    if (buffer[i] != 0) non_zero++;
+            size_t num_samples = bytes_read / sizeof(int16_t);
+
+            // Process through VAD if enabled
+            if (vad_enabled && vad_handle != NULL) {
+                vad_state_t vad_state = vad_process_frame(vad_handle, buffer, num_samples);
+
+                // Notify VAD state changes
+                if (vad_state == VAD_STATE_SPEAKING && !speech_detected) {
+                    speech_detected = true;
+                    if (vad_callback) {
+                        vad_callback(VAD_EVENT_SPEECH_START);
+                    }
+                    ESP_LOGI(TAG, "Speech detected!");
+                } else if (vad_state == VAD_STATE_END && speech_detected) {
+                    if (vad_callback) {
+                        vad_callback(VAD_EVENT_SPEECH_END);
+                    }
+                    ESP_LOGI(TAG, "Speech ended (duration: %lums)", vad_get_duration_ms(vad_handle));
+
+                    // Stop immediately - don't send this chunk
+                    is_capturing = false;
+                    break;
                 }
-                ESP_LOGI(TAG, "Chunk %d: %d bytes, %d non-zero samples",
-                         chunk_count, bytes_read, non_zero);
+
+                // Check if VAD says to stop (redundant check, but keep for safety)
+                if (vad_should_stop(vad_handle)) {
+                    ESP_LOGI(TAG, "VAD auto-stop triggered");
+                    is_capturing = false;
+                    break;
+                }
+            }
+
+            // Debug: Log audio statistics periodically
+            if (chunk_count % 20 == 0) {  // Log every 20th chunk (~1.3 seconds)
+                int non_zero = 0;
+                int32_t peak = 0;
+                for (size_t i = 0; i < num_samples; i++) {
+                    if (buffer[i] != 0) non_zero++;
+                    if (abs(buffer[i]) > peak) peak = abs(buffer[i]);
+                }
+                ESP_LOGD(TAG, "Chunk %d: samples=%d, peak=%ld, non-zero=%d",
+                         chunk_count, num_samples, peak, non_zero);
             }
             chunk_count++;
 
@@ -64,7 +106,7 @@ static void capture_task(void *arg)
     }
 
     free(buffer);
-    ESP_LOGI(TAG, "Capture task stopped");
+    ESP_LOGI(TAG, "Capture task stopped (chunks: %d)", chunk_count);
     vTaskDelete(NULL);
 }
 
@@ -122,5 +164,53 @@ void audio_capture_stop(void)
 void audio_capture_deinit(void)
 {
     audio_capture_stop();
+
+    if (vad_handle != NULL) {
+        vad_deinit(vad_handle);
+        vad_handle = NULL;
+    }
+
     ESP_LOGI(TAG, "Audio capture deinitialized");
+}
+
+esp_err_t audio_capture_enable_vad(const vad_config_t *config, audio_capture_vad_callback_t callback)
+{
+    if (config == NULL) {
+        ESP_LOGE(TAG, "Invalid VAD config");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Initialize VAD
+    esp_err_t ret = vad_init(config, &vad_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize VAD");
+        return ret;
+    }
+
+    vad_enabled = true;
+    vad_callback = callback;
+
+    ESP_LOGI(TAG, "VAD enabled");
+    return ESP_OK;
+}
+
+void audio_capture_disable_vad(void)
+{
+    vad_enabled = false;
+    vad_callback = NULL;
+
+    if (vad_handle != NULL) {
+        vad_deinit(vad_handle);
+        vad_handle = NULL;
+    }
+
+    ESP_LOGI(TAG, "VAD disabled");
+}
+
+void audio_capture_reset_vad(void)
+{
+    if (vad_handle != NULL) {
+        vad_reset(vad_handle);
+        ESP_LOGD(TAG, "VAD reset");
+    }
 }

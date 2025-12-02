@@ -81,39 +81,86 @@ static void tts_audio_handler(const uint8_t *audio_data, size_t length)
 // Audio streaming test variables
 static char *pipeline_handler = NULL;
 static int audio_chunks_sent = 0;
-static const int MAX_AUDIO_CHUNKS = 80;  // ~5 seconds @ 16kHz (1024 samples/chunk)
+static bool pipeline_active = false;
+
+static void vad_event_handler(audio_capture_vad_event_t event)
+{
+    switch (event) {
+        case VAD_EVENT_SPEECH_START:
+            ESP_LOGI(TAG, "🎤 Speech detected - recording...");
+            break;
+
+        case VAD_EVENT_SPEECH_END:
+            ESP_LOGI(TAG, "🔇 Silence detected - VAD auto-stop triggered");
+            ESP_LOGI(TAG, "Total audio chunks sent: %d", audio_chunks_sent);
+
+            // Mark pipeline as inactive to stop sending audio chunks
+            pipeline_active = false;
+
+            // Stop audio capture immediately to free I2S for TTS playback
+            audio_capture_stop();
+            ESP_LOGI(TAG, "Audio capture stopped - I2S freed for TTS");
+
+            // End audio stream to HA
+            ha_client_end_audio_stream();
+
+            // Cleanup pipeline handler
+            if (pipeline_handler != NULL) {
+                free(pipeline_handler);
+                pipeline_handler = NULL;
+            }
+            audio_chunks_sent = 0;
+            break;
+    }
+}
 
 static void audio_capture_handler(const uint8_t *audio_data, size_t length)
 {
-    if (pipeline_handler == NULL) {
-        return;  // No active pipeline
+    // Check if pipeline is still active
+    if (!pipeline_active || pipeline_handler == NULL) {
+        return;  // Pipeline closed or not started
+    }
+
+    // Validate audio data
+    if (audio_data == NULL || length == 0) {
+        return;
     }
 
     // Stream audio to HA
     esp_err_t ret = ha_client_stream_audio(audio_data, length, pipeline_handler);
     if (ret == ESP_OK) {
         audio_chunks_sent++;
-
-        // Stop after MAX_AUDIO_CHUNKS
-        if (audio_chunks_sent >= MAX_AUDIO_CHUNKS) {
-            ESP_LOGI(TAG, "Sent %d audio chunks, ending stream...", audio_chunks_sent);
-            audio_capture_stop();
-            ha_client_end_audio_stream();
-
-            free(pipeline_handler);
-            pipeline_handler = NULL;
-            audio_chunks_sent = 0;
-        }
     } else {
-        ESP_LOGW(TAG, "Failed to stream audio chunk");
+        ESP_LOGW(TAG, "Failed to stream audio chunk - pipeline may be closed");
     }
 }
 
 static void test_audio_streaming(void)
 {
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "Starting Audio Streaming Test");
+    ESP_LOGI(TAG, "Starting Audio Streaming Test with VAD");
     ESP_LOGI(TAG, "========================================");
+
+    // Configure VAD with very sensitive settings for testing
+    vad_config_t vad_config = {
+        .sample_rate = 16000,
+        .speech_threshold = 100,         // Very sensitive (was 300)
+        .silence_duration_ms = 2000,     // 2s silence to end
+        .min_speech_duration_ms = 100,   // 100ms minimum
+        .max_recording_ms = 8000         // 8s max (will auto-stop)
+    };
+
+    ESP_LOGI(TAG, "📊 VAD Config: threshold=%lu, silence=%lums, max=%lums",
+             vad_config.speech_threshold,
+             vad_config.silence_duration_ms,
+             vad_config.max_recording_ms);
+
+    // Enable VAD with event callback
+    esp_err_t ret = audio_capture_enable_vad(&vad_config, vad_event_handler);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable VAD");
+        return;
+    }
 
     // Start Assist Pipeline
     pipeline_handler = ha_client_start_conversation();
@@ -123,13 +170,17 @@ static void test_audio_streaming(void)
     }
 
     ESP_LOGI(TAG, "Pipeline started: %s", pipeline_handler);
-    ESP_LOGI(TAG, "Starting audio capture (will record ~5 seconds)...");
+    ESP_LOGI(TAG, "🎙️  Start speaking now! (VAD will auto-stop after silence)");
 
-    // Reset counters
+    // Reset counters and mark pipeline as active
     audio_chunks_sent = 0;
+    pipeline_active = true;
+
+    // Reset VAD state
+    audio_capture_reset_vad();
 
     // Start capturing and streaming audio
-    esp_err_t ret = audio_capture_start(audio_capture_handler);
+    ret = audio_capture_start(audio_capture_handler);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start audio capture");
         free(pipeline_handler);

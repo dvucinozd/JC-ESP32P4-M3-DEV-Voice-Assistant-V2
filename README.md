@@ -16,7 +16,9 @@ Lokalni glasovni asistent za Home Assistant baziran na ESP32-P4 platformi, imple
 - ✅ Speech-to-Text streaming
 - ✅ Intent processing
 - ✅ Text-to-Speech MP3 download
-- ✅ MP3 decoding & playback
+- ✅ MP3 decoding & playback (24kHz, clean audio)
+- ✅ Voice Activity Detection (VAD) with auto-stop
+- ✅ Codec mute/unmute management
 
 ---
 
@@ -128,8 +130,9 @@ esp32-p4-voice-assistant/
 │   ├── mp3_player.c          # Main application entry point
 │   ├── wifi_manager.c        # WiFi connectivity (ESP32-C6 SDIO)
 │   ├── ha_client.c           # Home Assistant WebSocket client
-│   ├── audio_capture.c       # Microphone input (ES8311)
+│   ├── audio_capture.c       # Microphone input (ES8311) + VAD integration
 │   ├── tts_player.c          # TTS MP3 decoder & playback
+│   ├── vad.c/vad.h           # Voice Activity Detection (RMS energy)
 │   ├── config.h              # WiFi, HA credentials
 │   └── Kconfig.projbuild
 ├── common_components/
@@ -175,12 +178,19 @@ esp32-p4-voice-assistant/
 - [x] Intent handling
 - [x] Full conversation loop
 
-### Phase 4: Advanced Features 🚧 TODO
+### Phase 4: Voice Activity Detection ✅ COMPLETED
+- [x] RMS energy-based VAD implementation
+- [x] Auto-stop recording after 2s silence
+- [x] Maximum recording duration (8s)
+- [x] Dynamic energy threshold (100)
+- [x] Configurable silence/speech detection
+
+### Phase 5: Advanced Features 🚧 TODO
 - [ ] Wake word detection (TensorFlow Lite Micro)
-- [ ] VAD (Voice Activity Detection) - auto-stop recording
 - [ ] Audio preprocessing (noise reduction)
 - [ ] Acoustic Echo Cancellation (AEC)
 - [ ] Multi-wake word support
+- [ ] Croatian language support (STT/TTS)
 - [ ] Display integration (MIPI-DSI)
 - [ ] Battery monitoring
 - [ ] OTA updates
@@ -288,6 +298,11 @@ Enable: Component config → ESP32P4-specific → Support for external PSRAM
 - Check speaker connection (JST connector)
 - Verify PA_EN pin (GPIO11)
 - Check I2S pins in main code
+- **FIXED:** Codec mute issue - ensure `bsp_extra_codec_mute_set(false)` is called before TTS playback
+
+**Choppy TTS audio:**
+- **FIXED:** Increased TTS buffer from 32KB to 128KB
+- **FIXED:** I2S channel re-initialization optimized (use `bsp_extra_codec_open_playback()`)
 
 **WiFi not connecting:**
 - Flash ESP-Hosted firmware to C6
@@ -298,6 +313,11 @@ Enable: Component config → ESP32P4-specific → Support for external PSRAM
 - Install USB drivers (CP210x or CH340)
 - Check Device Manager for COM port
 - Try different USB cable
+
+**VAD not detecting speech:**
+- Increase microphone gain in `bsp_board_extra.h` (default: 40.0 dB)
+- Adjust VAD energy threshold in `vad.c` (default: 100)
+- Check audio levels in monitor log
 
 ---
 
@@ -332,19 +352,27 @@ MIT License - Open source za educational i development svrhe.
 
 ---
 
-**Status:** ✅ **FUNCTIONAL** - Basic voice assistant working
-**Last Updated:** 2025-12-01
+**Status:** ✅ **FULLY FUNCTIONAL** - Voice assistant with VAD and clean TTS audio
+**Last Updated:** 2025-12-02
 
 ---
 
 ## 🎯 How It Works
 
 1. **Audio Capture:** ESP32-P4 captures audio from ES8311 microphone (16kHz, 16-bit, mono)
-2. **WiFi Upload:** Audio streamed to Home Assistant via WebSocket (binary frames with handler ID)
-3. **Speech Recognition:** HA Assist Pipeline processes speech-to-text
-4. **Intent Processing:** HA executes intent (e.g., "turn on lights")
-5. **TTS Generation:** HA generates response using Google Translate TTS (~24kHz MP3)
-6. **Download & Decode:** ESP32 downloads MP3 via HTTP, decodes using libhelix-mp3
-7. **Playback:** Decoded PCM audio played through ES8311 speaker
+2. **Voice Activity Detection:** RMS energy-based VAD detects speech start/end automatically
+3. **WiFi Upload:** Audio streamed to Home Assistant via WebSocket (binary frames with handler ID)
+4. **Speech Recognition:** HA Assist Pipeline processes speech-to-text
+5. **Intent Processing:** HA executes intent (e.g., "turn on lights")
+6. **TTS Generation:** HA generates response using Google Translate TTS (~24kHz MP3)
+7. **Download & Decode:** ESP32 downloads MP3 via HTTP, decodes using libhelix-mp3
+8. **Playback:** Decoded PCM audio played through ES8311 speaker (codec unmuted automatically)
 
 **Full conversation latency:** ~4-6 seconds (network dependent)
+
+### Key Features
+
+- **Automatic Speech Detection:** VAD automatically starts/stops recording based on speech detection
+- **Clean Audio Playback:** 128KB TTS buffer eliminates choppy audio
+- **Optimized I2S Management:** Separate playback channel initialization prevents audio glitches
+- **Codec Mute Control:** Automatic unmute before TTS playback ensures audio output
