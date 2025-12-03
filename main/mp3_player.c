@@ -274,6 +274,17 @@ static void wwd_audio_feed_wrapper(const int16_t *audio_data, size_t samples)
     wwd_feed_audio(audio_data, samples);
 }
 
+static void tts_playback_complete_handler(void)
+{
+    ESP_LOGI(TAG, "🔄 TTS playback complete - resuming wake word detection...");
+
+    // Resume wake word detection
+    wwd_start();
+    audio_capture_start_wake_word_mode(wwd_audio_feed_wrapper);
+
+    ESP_LOGI(TAG, "✅ Wake word detection resumed - ready for next command");
+}
+
 static void vad_event_handler(audio_capture_vad_event_t event)
 {
     switch (event) {
@@ -302,10 +313,8 @@ static void vad_event_handler(audio_capture_vad_event_t event)
             }
             audio_chunks_sent = 0;
 
-            // Resume wake word detection after TTS completes
-            ESP_LOGI(TAG, "🔄 Resuming wake word detection...");
-            wwd_start();
-            audio_capture_start_wake_word_mode(wwd_audio_feed_wrapper);
+            // WWD will be resumed AFTER TTS playback completes (via callback)
+            ESP_LOGI(TAG, "Waiting for TTS playback to complete before resuming WWD...");
             break;
     }
 }
@@ -468,6 +477,7 @@ void app_main(void)
             // Register callbacks
             ha_client_register_conversation_callback(conversation_response_handler);
             ha_client_register_tts_audio_callback(tts_audio_handler);
+            tts_player_register_complete_callback(tts_playback_complete_handler);
 
             // Initialize MQTT Home Assistant Discovery
             ESP_LOGI(TAG, "Initializing MQTT Home Assistant Discovery...");

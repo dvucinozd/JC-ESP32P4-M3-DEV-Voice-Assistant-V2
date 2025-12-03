@@ -35,6 +35,9 @@ static HMP3Decoder mp3_decoder = NULL;
 static uint8_t *tts_buffer = NULL;
 static size_t tts_buffer_pos = 0;
 
+// Playback completion callback
+static tts_playback_complete_callback_t playback_complete_callback = NULL;
+
 /**
  * Decode and play MP3 audio buffer
  */
@@ -127,6 +130,12 @@ static esp_err_t play_mp3_buffer(uint8_t *mp3_data, size_t mp3_size)
     free(pcm_buffer);
 
     ESP_LOGI(TAG, "Playback complete: %d samples", total_samples);
+
+    // Call completion callback if registered
+    if (playback_complete_callback) {
+        playback_complete_callback();
+    }
+
     return ESP_OK;
 }
 
@@ -306,5 +315,13 @@ void tts_player_deinit(void)
         mp3_decoder = NULL;
     }
 
+    playback_complete_callback = NULL;
+
     ESP_LOGI(TAG, "TTS player deinitialized");
+}
+
+void tts_player_register_complete_callback(tts_playback_complete_callback_t callback)
+{
+    playback_complete_callback = callback;
+    ESP_LOGI(TAG, "TTS playback completion callback registered");
 }

@@ -40,6 +40,18 @@ void tts_player_stop(void);
  */
 void tts_player_deinit(void);
 
+/**
+ * @brief Callback when TTS playback completes
+ */
+typedef void (*tts_playback_complete_callback_t)(void);
+
+/**
+ * @brief Register callback for TTS playback completion
+ *
+ * @param callback Function to call when playback finishes
+ */
+void tts_player_register_complete_callback(tts_playback_complete_callback_t callback);
+
 #ifdef __cplusplus
 }
 #endif
