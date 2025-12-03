@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <ctype.h>
+#include <string.h>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -74,6 +76,49 @@ static void conversation_response_handler(const char *response_text, const char 
     ESP_LOGI(TAG, "HA Response [%s]: %s",
              conversation_id ? conversation_id : "none",
              response_text);
+
+    // Parse music control commands from HA response
+    if (response_text && local_music_player_is_initialized()) {
+        // Convert to lowercase for case-insensitive matching
+        char *response_lower = strdup(response_text);
+        if (response_lower) {
+            for (char *p = response_lower; *p; p++) {
+                *p = tolower((unsigned char)*p);
+            }
+
+            // Check for music control commands
+            if (strstr(response_lower, "play music") || strstr(response_lower, "start music") ||
+                strstr(response_lower, "play song")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Play music");
+                local_music_player_play();
+            }
+            else if (strstr(response_lower, "stop music") || strstr(response_lower, "stop song")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Stop music");
+                local_music_player_stop();
+            }
+            else if (strstr(response_lower, "pause music") || strstr(response_lower, "pause song")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Pause music");
+                local_music_player_pause();
+            }
+            else if (strstr(response_lower, "resume music") || strstr(response_lower, "resume song") ||
+                     strstr(response_lower, "continue music")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Resume music");
+                local_music_player_resume();
+            }
+            else if (strstr(response_lower, "next song") || strstr(response_lower, "next track") ||
+                     strstr(response_lower, "skip")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Next track");
+                local_music_player_next();
+            }
+            else if (strstr(response_lower, "previous song") || strstr(response_lower, "previous track") ||
+                     strstr(response_lower, "go back")) {
+                ESP_LOGI(TAG, "🎵 Voice command: Previous track");
+                local_music_player_previous();
+            }
+
+            free(response_lower);
+        }
+    }
 }
 
 static void network_event_callback(network_type_t type, bool connected)
@@ -206,6 +251,57 @@ static void mqtt_wwd_switch_callback(const char *entity_id, const char *payload)
     }
 }
 
+// MQTT Music Player Callbacks
+static void mqtt_music_play_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Play music button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_play();
+    } else {
+        ESP_LOGW(TAG, "Music player not initialized (SD card not mounted?)");
+    }
+}
+
+static void mqtt_music_stop_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Stop music button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_stop();
+    }
+}
+
+static void mqtt_music_pause_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Pause music button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_pause();
+    }
+}
+
+static void mqtt_music_resume_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Resume music button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_resume();
+    }
+}
+
+static void mqtt_music_next_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Next track button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_next();
+    }
+}
+
+static void mqtt_music_previous_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: Previous track button pressed");
+    if (local_music_player_is_initialized()) {
+        local_music_player_previous();
+    }
+}
+
 static void mqtt_restart_callback(const char *entity_id, const char *payload)
 {
     ESP_LOGI(TAG, "MQTT: Restart button pressed!");
@@ -329,6 +425,46 @@ static void mqtt_status_update_task(void *arg)
                 mqtt_ha_update_sensor("sd_card_status", "mounted");
             } else {
                 mqtt_ha_update_sensor("sd_card_status", "not_mounted");
+            }
+
+            // Update music player status
+            if (local_music_player_is_initialized()) {
+                // Update music state
+                music_state_t state = local_music_player_get_state();
+                const char *state_str;
+                switch (state) {
+                    case MUSIC_STATE_PLAYING:
+                        state_str = "playing";
+                        break;
+                    case MUSIC_STATE_PAUSED:
+                        state_str = "paused";
+                        break;
+                    case MUSIC_STATE_STOPPED:
+                        state_str = "stopped";
+                        break;
+                    default:
+                        state_str = "idle";
+                        break;
+                }
+                mqtt_ha_update_sensor("music_state", state_str);
+
+                // Update current track
+                char track_name[64];
+                if (local_music_player_get_track_name(track_name, sizeof(track_name)) == ESP_OK) {
+                    mqtt_ha_update_sensor("current_track", track_name);
+                } else {
+                    mqtt_ha_update_sensor("current_track", "No track");
+                }
+
+                // Update total tracks
+                char total_tracks_str[16];
+                snprintf(total_tracks_str, sizeof(total_tracks_str), "%d",
+                         local_music_player_get_total_tracks());
+                mqtt_ha_update_sensor("total_tracks", total_tracks_str);
+            } else {
+                mqtt_ha_update_sensor("music_state", "unavailable");
+                mqtt_ha_update_sensor("current_track", "N/A");
+                mqtt_ha_update_sensor("total_tracks", "0");
             }
 
             // Update configuration numbers (only on first iteration or when changed)
@@ -629,9 +765,22 @@ void app_main(void)
                     // Switches
                     mqtt_ha_register_switch("wwd_enabled", "Wake Word Detection", mqtt_wwd_switch_callback);
 
-                    // Buttons
+                    // Buttons - System
                     mqtt_ha_register_button("restart", "Restart Device", mqtt_restart_callback);
                     mqtt_ha_register_button("test_tts", "Test TTS", mqtt_test_tts_callback);
+
+                    // Buttons - Music Player
+                    mqtt_ha_register_button("music_play", "Play Music", mqtt_music_play_callback);
+                    mqtt_ha_register_button("music_stop", "Stop Music", mqtt_music_stop_callback);
+                    mqtt_ha_register_button("music_pause", "Pause Music", mqtt_music_pause_callback);
+                    mqtt_ha_register_button("music_resume", "Resume Music", mqtt_music_resume_callback);
+                    mqtt_ha_register_button("music_next", "Next Track", mqtt_music_next_callback);
+                    mqtt_ha_register_button("music_previous", "Previous Track", mqtt_music_previous_callback);
+
+                    // Sensors - Music Player
+                    mqtt_ha_register_sensor("music_state", "Music State", NULL, NULL);
+                    mqtt_ha_register_sensor("current_track", "Current Track", NULL, NULL);
+                    mqtt_ha_register_sensor("total_tracks", "Total Tracks", NULL, NULL);
 
                     // Number controls for VAD tuning
                     mqtt_ha_register_number("vad_threshold", "VAD Speech Threshold",
@@ -647,7 +796,7 @@ void app_main(void)
                     mqtt_ha_register_number("wwd_threshold", "WWD Detection Threshold",
                                            0.3, 0.9, 0.05, NULL, mqtt_wwd_threshold_callback);
 
-                    ESP_LOGI(TAG, "Home Assistant entities registered (3 sensors, 1 switch, 2 buttons, 5 numbers)");
+                    ESP_LOGI(TAG, "Home Assistant entities registered (9 sensors, 1 switch, 8 buttons, 5 numbers)");
 
                     // Start MQTT status update task
                     xTaskCreate(mqtt_status_update_task, "mqtt_status", 4096, NULL, 3, NULL);
