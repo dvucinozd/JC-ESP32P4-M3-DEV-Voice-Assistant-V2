@@ -88,6 +88,7 @@ static void tts_audio_handler(const uint8_t *audio_data, size_t length)
 static char *pipeline_handler = NULL;
 static int audio_chunks_sent = 0;
 static bool pipeline_active = false;
+static int warmup_chunks_skip = 0;  // Skip first N chunks after wake word
 
 // Forward declarations
 static void test_audio_streaming(void);
@@ -175,6 +176,13 @@ static void on_wake_word_detected(wwd_event_t event, void *user_data)
         // Stop wake word detection
         wwd_stop();
 
+        // Stop audio capture (from wake word mode)
+        audio_capture_stop();
+        ESP_LOGI(TAG, "Wake word mode stopped - switching to recording mode");
+
+        // Small delay to ensure capture task fully exits
+        vTaskDelay(pdMS_TO_TICKS(150));
+
         // Start voice assistant pipeline
         test_audio_streaming();
     }
@@ -234,6 +242,13 @@ static void audio_capture_handler(const uint8_t *audio_data, size_t length)
         return;
     }
 
+    // Skip warmup chunks to avoid wake word remnants
+    if (warmup_chunks_skip > 0) {
+        warmup_chunks_skip--;
+        ESP_LOGD(TAG, "Skipping warmup chunk (%d remaining)", warmup_chunks_skip);
+        return;
+    }
+
     // Stream audio to HA
     esp_err_t ret = ha_client_stream_audio(audio_data, length, pipeline_handler);
     if (ret == ESP_OK) {
@@ -283,6 +298,7 @@ static void test_audio_streaming(void)
     // Reset counters and mark pipeline as active
     audio_chunks_sent = 0;
     pipeline_active = true;
+    warmup_chunks_skip = 10;  // Skip first 10 chunks (~640ms) to clear wake word remnants
 
     // Reset VAD state
     audio_capture_reset_vad();
