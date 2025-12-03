@@ -66,10 +66,13 @@ static esp_err_t ethernet_init(void)
 
     ESP_LOGI(TAG, "PHY reset complete (GPIO %d)", ETH_PHY_RST_GPIO);
 
-    // Create MAC configuration
+    // Create MAC configuration (common)
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
-    mac_config.smi_mdc_gpio_num = ETH_MDC_GPIO;
-    mac_config.smi_mdio_gpio_num = ETH_MDIO_GPIO;
+
+    // Create ESP32 EMAC specific configuration
+    eth_esp32_emac_config_t esp32_emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
+    esp32_emac_config.smi_gpio.mdc_num = ETH_MDC_GPIO;
+    esp32_emac_config.smi_gpio.mdio_num = ETH_MDIO_GPIO;
 
     // Create PHY configuration
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
@@ -77,7 +80,7 @@ static esp_err_t ethernet_init(void)
     phy_config.reset_gpio_num = ETH_PHY_RST_GPIO;
 
     // Create MAC instance (ESP32-P4 internal EMAC)
-    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config, NULL);
+    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&esp32_emac_config, &mac_config);
     if (mac == NULL) {
         ESP_LOGE(TAG, "Failed to create MAC instance");
         return ESP_FAIL;
