@@ -129,6 +129,28 @@ esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_sl
     return ret;
 }
 
+// Open only record device (for microphone input)
+esp_err_t bsp_extra_codec_open_record(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch)
+{
+    esp_err_t ret = ESP_OK;
+
+    esp_codec_dev_sample_info_t fs = {
+        .sample_rate = rate,
+        .channel = ch,
+        .bits_per_sample = bits_cfg,
+    };
+
+    if (record_dev_handle) {
+        // Close first to allow channel/rate reconfiguration
+        esp_codec_dev_close(record_dev_handle);
+        ret = esp_codec_dev_open(record_dev_handle, &fs);
+        ret |= esp_codec_dev_set_in_gain(record_dev_handle, CODEC_DEFAULT_ADC_VOLUME);
+        ESP_LOGI(TAG, "Setting record codec to %d Hz, %d bits, %d channels", rate, bits_cfg, ch);
+    }
+
+    return ret;
+}
+
 esp_err_t bsp_extra_codec_volume_set(int volume, int *volume_set)
 {
     ESP_RETURN_ON_ERROR(esp_codec_dev_set_out_vol(play_dev_handle, volume), TAG, "Set Codec volume failed");

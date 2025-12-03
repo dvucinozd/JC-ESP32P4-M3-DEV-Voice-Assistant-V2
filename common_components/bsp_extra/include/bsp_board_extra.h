@@ -109,6 +109,19 @@ esp_err_t bsp_extra_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode
 esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
 
 /**
+ * @brief Open record device only for microphone input
+ *
+ * @param rate: Sample rate of sample
+ * @param bits_cfg: Bit lengths of one channel data
+ * @param ch: Channels of sample
+ *
+ * @return
+ *    - ESP_OK: Success
+ *    - Others: Fail
+ */
+esp_err_t bsp_extra_codec_open_record(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
+
+/**
  * @brief Read data from recoder.
  *
  * @param audio_buffer: The pointer of receiving data buffer

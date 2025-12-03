@@ -141,6 +141,13 @@ esp_err_t audio_capture_start(audio_capture_callback_t callback)
         return ESP_OK;
     }
 
+    // Reset codec to microphone configuration (16kHz MONO)
+    extern esp_err_t bsp_extra_codec_open_record(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
+    esp_err_t codec_ret = bsp_extra_codec_open_record(16000, 16, I2S_SLOT_MODE_MONO);
+    if (codec_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to reset codec for recording: %s", esp_err_to_name(codec_ret));
+    }
+
     capture_callback = callback;
     capture_mode = CAPTURE_MODE_RECORDING;  // Set to recording mode
     is_capturing = true;
@@ -244,6 +251,16 @@ esp_err_t audio_capture_start_wake_word_mode(audio_capture_wwd_callback_t wwd_cb
     }
 
     ESP_LOGI(TAG, "Starting wake word detection mode");
+
+    // Reset codec to microphone configuration (16kHz MONO)
+    // This is critical after TTS playback which uses 24kHz STEREO
+    extern esp_err_t bsp_extra_codec_open_record(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
+    esp_err_t codec_ret = bsp_extra_codec_open_record(16000, 16, I2S_SLOT_MODE_MONO);
+    if (codec_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to reset codec for microphone: %s", esp_err_to_name(codec_ret));
+    } else {
+        ESP_LOGI(TAG, "Codec reset to 16kHz MONO for microphone");
+    }
 
     wwd_callback = wwd_cb;
     capture_mode = CAPTURE_MODE_WAKE_WORD;
