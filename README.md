@@ -2,24 +2,19 @@
 
 Lokalni glasovni asistent za Home Assistant baziran na ESP32-P4 platformi, implementiran u native ESP-IDF frameworku.
 
-## 📋 Projektni Status
+## 📋 Project Status
 
-**Faza:** ✅ **FUNCTIONAL - Voice Assistant Working**
-**Base:** JC-ESP32P4-M3-DEV mp3_player demo
-**Framework:** ESP-IDF v5.5
+**Faza:** ✅ **FUNCTIONAL - Voice Assistant Working**  
+**Base:** JC-ESP32P4-M3-DEV mp3_player demo  
+**Framework:** ESP-IDF v5.5  
 **Target:** Home Assistant Voice Integration
 
-**Current Status:**
-- ✅ **Wake Word Detection** - WakeNet9 "Hi ESP" model
-- ✅ Audio capture (Microphone → PCM 16kHz MONO)
-- ✅ WiFi connectivity (ESP32-C6 via SDIO)
-- ✅ Home Assistant WebSocket connection
-- ✅ Speech-to-Text streaming (Google AI STT)
-- ✅ Intent processing (Home Assistant Assist)
-- ✅ Text-to-Speech MP3 download & playback
-- ✅ Voice Activity Detection (VAD) with auto-stop
-- ✅ Codec mute/unmute management
-- ✅ Complete hands-free voice pipeline
+**Highlights (current build):**
+- ✅ Wake word detection (WakeNet9 "Hi ESP") with confirmation beep and warmup skip
+- ✅ Hands-free pipeline: wake -> VAD -> HA STT/intent -> TTS playback -> auto resume wake word mode
+- ✅ MQTT HA auto-discovery: sensors (wifi_rssi, free_memory, uptime), WWD switch, restart/test-TTS buttons, VAD/WWD tuning numbers
+- ✅ WiFi via ESP32-C6 SDIO, mDNS hostname/IP fallback, HA WebSocket + TTS download
+- ✅ Codec stability: set_fs reconfigure between microphone, beep tone, and TTS playback
 
 ---
 
@@ -88,14 +83,14 @@ C6_RESET:  GPIO54 (optional)
 ### 1. Build Project
 
 ```cmd
-cd D:\platformio\P4\esp32-p4-voice-assistant
+cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 build.bat
 ```
 
 Or manually:
 ```cmd
 C:\Espressif\frameworks\esp-idf-v5.5\export.bat
-cd D:\platformio\P4\esp32-p4-voice-assistant
+cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 idf.py build
 ```
 
@@ -104,6 +99,8 @@ idf.py build
 ```cmd
 flash.bat
 ```
+
+`COM_PORT` env var overrides the default COM13 used in the script.
 
 Or manually:
 ```cmd
@@ -120,37 +117,43 @@ idf.py -p COM3 monitor
 
 Exit monitor: `Ctrl+]`
 
+## 🛰 MQTT Home Assistant Integration
+
+- Auto-discovery via MQTT; device appears as "ESP32-P4 Voice Assistant" in Home Assistant
+- Sensors: `wifi_rssi`, `free_memory`, `uptime` (10s updates)
+- Controls: switch `wwd_enabled`, buttons `restart` and `test_tts`
+- Number tuning: `vad_threshold`, `vad_silence_duration`, `vad_min_speech`, `vad_max_recording`, `wwd_threshold`
+- Wake flow: confirmation beep, warmup chunk skip, and wake word resumes only after TTS completion
+- See `MQTT_INTEGRATION.md` for dashboard examples and topic references
+
 ---
 
 ## 📂 Project Structure
 
 ```
-esp32-p4-voice-assistant/
-├── main/
-│   ├── CMakeLists.txt
-│   ├── mp3_player.c          # Main application entry point
-│   ├── wifi_manager.c        # WiFi connectivity (ESP32-C6 SDIO)
-│   ├── ha_client.c           # Home Assistant WebSocket client
-│   ├── audio_capture.c       # Microphone input (ES8311) + VAD integration
-│   ├── wwd.c/wwd.h           # Wake Word Detection (WakeNet9)
-│   ├── tts_player.c          # TTS MP3 decoder & playback
-│   ├── vad.c/vad.h           # Voice Activity Detection (RMS energy)
-│   ├── config.h              # WiFi, HA credentials
-│   └── Kconfig.projbuild
-├── common_components/
-│   ├── bsp_extra/            # Board Support Package (Audio drivers)
-│   └── espressif__esp32_p4_function_ev_board/
-├── managed_components/       # ESP-IDF managed dependencies
-│   ├── chmorgan__esp-libhelix-mp3/    # MP3 decoder
-│   ├── chmorgan__esp-audio-player/    # Audio player framework
-│   └── espressif__esp_websocket_client/
-├── build/                    # Build output (generated)
-├── CMakeLists.txt
-├── sdkconfig                 # ESP-IDF configuration
-├── partitions.csv
-├── build.bat                 # Windows build script
-├── flash.bat                 # Windows flash script
-└── README.md
+JC-ESP32P4-M3-DEV-Voice-Assistant_NEW/
+  main/
+    CMakeLists.txt
+    mp3_player.c             # Main application entry point
+    mqtt_ha.c / mqtt_ha.h    # MQTT HA discovery + entities/controls
+    beep_tone.c / beep_tone.h# Wake confirmation tone
+    wifi_manager.c           # WiFi connectivity (ESP32-C6 SDIO)
+    ha_client.c              # Home Assistant WebSocket/TTS client
+    audio_capture.c          # Microphone input (ES8311) + VAD integration
+    wwd.c / wwd.h            # Wake Word Detection (WakeNet9)
+    tts_player.c             # TTS MP3 decoder & playback
+    vad.c / vad.h            # Voice Activity Detection (RMS energy)
+    config.h.example         # Sample credentials (copy to config.h)
+    Kconfig.projbuild
+  common_components/
+    bsp_extra/               # Board Support Package (audio drivers)
+    espressif__esp32_p4_function_ev_board/
+  managed_components/        # ESP-IDF managed deps (esp-sr, mqtt, websocket…)
+  build/                     # Build output (generated)
+  build.bat / flash.bat / build.py / flash.py / quick_build.bat / quick_flash.bat
+  partitions.csv
+  sdkconfig
+  README.md
 ```
 
 ---
@@ -195,7 +198,12 @@ esp32-p4-voice-assistant/
 - [x] Automatic pipeline activation on wake word
 - [x] MONO audio configuration fix
 
-### Phase 6: Advanced Features 🚧 TODO
+### Phase 6: MQTT & Remote Controls ✅ COMPLETED
+- [x] MQTT HA auto-discovery (sensors, switch, buttons)
+- [x] MQTT number controls for VAD/WWD tuning
+- [x] Wake confirmation beep and TTS-complete resume handling
+
+### Phase 7: Advanced Features 🚧 TODO
 - [ ] Audio preprocessing (noise reduction)
 - [ ] Acoustic Echo Cancellation (AEC)
 - [ ] Multi-wake word support
@@ -207,9 +215,9 @@ esp32-p4-voice-assistant/
 
 ## 🛠️ Configuration
 
-### WiFi & Home Assistant Setup
+### WiFi, Home Assistant & MQTT Setup
 
-Edit `main/config.h`:
+Copy `main/config.h.example` to `main/config.h`, then edit your credentials (file is gitignored):
 
 ```c
 // WiFi Configuration
@@ -221,6 +229,12 @@ Edit `main/config.h`:
 #define HA_PORT 8123
 #define HA_USE_SSL false
 #define HA_TOKEN "your_long_lived_access_token"
+
+// MQTT Home Assistant Discovery
+#define MQTT_BROKER_URI "mqtt://homeassistant.local:1883"
+#define MQTT_USERNAME NULL
+#define MQTT_PASSWORD NULL
+#define MQTT_CLIENT_ID "esp32p4_voice_assistant"
 ```
 
 **Getting HA Access Token:**

@@ -12,7 +12,7 @@ METHOD 1: Using Build Scripts (RECOMMENDED)
 1. Open Windows Command Prompt (cmd.exe)
 
 2. Navigate to project:
-   cd D:\platformio\P4\esp32-p4-voice-assistant
+   cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 
 3. Run build:
    build.bat
@@ -28,7 +28,7 @@ METHOD 2: Manual Commands
    - Start Menu → ESP-IDF → ESP-IDF 5.5 CMD
 
 2. Navigate to project:
-   cd D:\platformio\P4\esp32-p4-voice-assistant
+   cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 
 3. Build:
    idf.py build
@@ -43,7 +43,7 @@ METHOD 3: Using VS Code
 -----------------------------------------------------------------
 
 1. Open folder in VS Code:
-   D:\platformio\P4\esp32-p4-voice-assistant
+   D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 
 2. Install ESP-IDF extension if not already installed
 

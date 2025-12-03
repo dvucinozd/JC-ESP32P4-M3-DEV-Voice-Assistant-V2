@@ -87,13 +87,13 @@ Prvo ćemo testirati samo audio funkcionalnost.
 #### Opcija A: Koristi Batch Script (Najlakše)
 
 ```cmd
-D:\platformio\P4\esp32-p4-voice-assistant\build.bat
+D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\build.bat
 ```
 
 #### Opcija B: Ručno
 
 ```cmd
-cd D:\platformio\P4\esp32-p4-voice-assistant
+cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
 C:\Espressif\frameworks\esp-idf-v5.5\export.bat
 idf.py build
 ```
@@ -113,7 +113,7 @@ Project build complete. To flash, run:
 #### Opcija A: Koristi Flash Script
 
 ```cmd
-D:\platformio\P4\esp32-p4-voice-assistant\flash.bat
+D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\flash.bat
 ```
 
 #### Opcija B: Ručno
@@ -164,12 +164,12 @@ ERROR: Component 'bsp_extra' not found
 **Fix:**
 ```cmd
 # Provjeri postoje li folderi:
-dir D:\platformio\P4\esp32-p4-voice-assistant\common_components
+dir D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\common_components
 ```
 
 Ako ne postoje, kopiraj iz original demo:
 ```cmd
-xcopy /E /I "D:\platformio\P4\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components" "D:\platformio\P4\esp32-p4-voice-assistant\common_components"
+xcopy /E /I "D:\platformio\P4\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components" "D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\common_components"
 ```
 
 ---
