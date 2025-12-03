@@ -1,5 +1,0 @@
-## IDF Component Manager Manifest File
-dependencies:
-  esp_lcd_jd9365_10_1:
-    version: "*"
-    path: "../../../esp_lcd_jd9365_10_1"
