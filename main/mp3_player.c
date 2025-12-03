@@ -25,6 +25,7 @@
 #include "wifi_manager.h"
 #include "network_manager.h"
 #include "bsp/esp32_p4_function_ev_board.h"  // For bsp_sdcard_mount/unmount
+#include "local_music_player.h"
 #include "ha_client.h"
 #include "tts_player.h"
 #include "audio_capture.h"
@@ -99,9 +100,20 @@ static void network_event_callback(network_type_t type, bool connected)
             esp_err_t sd_ret = bsp_sdcard_mount();
             if (sd_ret == ESP_OK) {
                 ESP_LOGI(TAG, "✅ SD card mounted successfully - local music playback enabled");
-                // Update MQTT sensor for SD card status
-                if (mqtt_ha_is_connected()) {
-                    mqtt_ha_update_sensor("sd_card_status", "mounted");
+
+                // Initialize local music player
+                esp_err_t music_ret = local_music_player_init();
+                if (music_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "🎵 Local music player initialized - %d tracks found",
+                             local_music_player_get_total_tracks());
+                    if (mqtt_ha_is_connected()) {
+                        mqtt_ha_update_sensor("sd_card_status", "ready");
+                    }
+                } else {
+                    ESP_LOGW(TAG, "⚠️  Music player init failed - no music files found?");
+                    if (mqtt_ha_is_connected()) {
+                        mqtt_ha_update_sensor("sd_card_status", "no_music");
+                    }
                 }
             } else {
                 ESP_LOGW(TAG, "⚠️  SD card mount failed - local music unavailable");
@@ -111,6 +123,13 @@ static void network_event_callback(network_type_t type, bool connected)
             }
         } else if (type == NETWORK_TYPE_WIFI) {
             ESP_LOGI(TAG, "📶 WiFi fallback active - SD card disabled");
+
+            // Deinitialize music player if running
+            if (local_music_player_is_initialized()) {
+                ESP_LOGI(TAG, "Stopping local music player...");
+                local_music_player_deinit();
+            }
+
             // Unmount SD card if it was mounted
             if (bsp_sdcard != NULL) {
                 ESP_LOGI(TAG, "Unmounting SD card (WiFi fallback mode)...");
@@ -122,6 +141,12 @@ static void network_event_callback(network_type_t type, bool connected)
         }
     } else {
         ESP_LOGW(TAG, "Network disconnected: %s", network_manager_type_to_string(type));
+
+        // Deinitialize music player on network disconnect
+        if (local_music_player_is_initialized()) {
+            ESP_LOGI(TAG, "Stopping local music player...");
+            local_music_player_deinit();
+        }
 
         // Unmount SD card on network disconnect
         if (bsp_sdcard != NULL) {
