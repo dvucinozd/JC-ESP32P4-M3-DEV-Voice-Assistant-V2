@@ -24,7 +24,7 @@
 #include "button_gpio.h"
 #include "wifi_manager.h"
 #include "network_manager.h"
-#include "sdcard_manager.h"
+#include "bsp/esp32_p4_function_ev_board.h"  // For bsp_sdcard_mount/unmount
 #include "ha_client.h"
 #include "tts_player.h"
 #include "audio_capture.h"
@@ -96,7 +96,7 @@ static void network_event_callback(network_type_t type, bool connected)
         // Mount/unmount SD card based on network type
         if (type == NETWORK_TYPE_ETHERNET) {
             ESP_LOGI(TAG, "📀 Ethernet active - mounting SD card for local music...");
-            esp_err_t sd_ret = sdcard_manager_init();
+            esp_err_t sd_ret = bsp_sdcard_mount();
             if (sd_ret == ESP_OK) {
                 ESP_LOGI(TAG, "✅ SD card mounted successfully - local music playback enabled");
                 // Update MQTT sensor for SD card status
@@ -112,9 +112,9 @@ static void network_event_callback(network_type_t type, bool connected)
         } else if (type == NETWORK_TYPE_WIFI) {
             ESP_LOGI(TAG, "📶 WiFi fallback active - SD card disabled");
             // Unmount SD card if it was mounted
-            if (sdcard_manager_is_mounted()) {
+            if (bsp_sdcard != NULL) {
                 ESP_LOGI(TAG, "Unmounting SD card (WiFi fallback mode)...");
-                sdcard_manager_deinit();
+                bsp_sdcard_unmount();
                 if (mqtt_ha_is_connected()) {
                     mqtt_ha_update_sensor("sd_card_status", "unmounted");
                 }
@@ -124,9 +124,9 @@ static void network_event_callback(network_type_t type, bool connected)
         ESP_LOGW(TAG, "Network disconnected: %s", network_manager_type_to_string(type));
 
         // Unmount SD card on network disconnect
-        if (sdcard_manager_is_mounted()) {
+        if (bsp_sdcard != NULL) {
             ESP_LOGI(TAG, "Unmounting SD card (network disconnected)...");
-            sdcard_manager_deinit();
+            bsp_sdcard_unmount();
             if (mqtt_ha_is_connected()) {
                 mqtt_ha_update_sensor("sd_card_status", "disconnected");
             }
@@ -300,7 +300,7 @@ static void mqtt_status_update_task(void *arg)
             mqtt_ha_update_sensor("network_type", network_manager_type_to_string(network_manager_get_active_type()));
 
             // Update SD card status
-            if (sdcard_manager_is_mounted()) {
+            if (bsp_sdcard != NULL) {
                 mqtt_ha_update_sensor("sd_card_status", "mounted");
             } else {
                 mqtt_ha_update_sensor("sd_card_status", "not_mounted");
