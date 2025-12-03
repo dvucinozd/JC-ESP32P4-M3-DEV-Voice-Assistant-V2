@@ -23,6 +23,7 @@
 #include "iot_button.h"
 #include "button_gpio.h"
 #include "wifi_manager.h"
+#include "network_manager.h"
 #include "ha_client.h"
 #include "tts_player.h"
 #include "audio_capture.h"
@@ -71,6 +72,35 @@ static void conversation_response_handler(const char *response_text, const char 
     ESP_LOGI(TAG, "HA Response [%s]: %s",
              conversation_id ? conversation_id : "none",
              response_text);
+}
+
+static void network_event_callback(network_type_t type, bool connected)
+{
+    if (connected) {
+        char ip_str[16];
+        network_manager_get_ip(ip_str);
+
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "Network Connected!");
+        ESP_LOGI(TAG, "Type: %s", network_manager_type_to_string(type));
+        ESP_LOGI(TAG, "IP Address: %s", ip_str);
+        ESP_LOGI(TAG, "========================================");
+
+        // Update MQTT sensor if MQTT is active
+        if (mqtt_ha_is_connected()) {
+            mqtt_ha_update_sensor("network_type", network_manager_type_to_string(type));
+            mqtt_ha_update_sensor("ip_address", ip_str);
+        }
+
+        // If Ethernet is active, SD card will be enabled in subsequent phases
+        if (type == NETWORK_TYPE_ETHERNET) {
+            ESP_LOGI(TAG, "📀 Ethernet active - SD card music will be available (Phase 4)");
+        } else if (type == NETWORK_TYPE_WIFI) {
+            ESP_LOGI(TAG, "📶 WiFi fallback active - SD card disabled");
+        }
+    } else {
+        ESP_LOGW(TAG, "Network disconnected: %s", network_manager_type_to_string(type));
+    }
 }
 
 static void tts_audio_handler(const uint8_t *audio_data, size_t length)
@@ -230,6 +260,13 @@ static void mqtt_status_update_task(void *arg)
 
             // Update WWD state
             mqtt_ha_update_switch("wwd_enabled", wwd_is_running());
+
+            // Update network status
+            char ip_str[16];
+            if (network_manager_get_ip(ip_str) == ESP_OK) {
+                mqtt_ha_update_sensor("ip_address", ip_str);
+            }
+            mqtt_ha_update_sensor("network_type", network_manager_type_to_string(network_manager_get_active_type()));
 
             // Update configuration numbers (only on first iteration or when changed)
             static bool config_published = false;
@@ -475,11 +512,13 @@ void app_main(void)
         ESP_LOGI(TAG, "Wake Word Detection initialized successfully!");
     }
 
-    // Initialize WiFi via ESP32-C6 (SDIO)
-    ESP_LOGI(TAG, "Initializing WiFi (ESP32-C6 via SDIO)...");
-    ret = wifi_init_sta();
-    if(ret == ESP_OK) {
-        ESP_LOGI(TAG, "WiFi connected successfully!");
+    // Initialize Network Manager (Ethernet priority + WiFi fallback)
+    ESP_LOGI(TAG, "Initializing Network Manager...");
+    network_manager_register_callback(network_event_callback);
+    ret = network_manager_init();
+    if(ret == ESP_OK && network_manager_is_connected()) {
+        ESP_LOGI(TAG, "Network connected successfully!");
+        ESP_LOGI(TAG, "Active network: %s", network_manager_type_to_string(network_manager_get_active_type()));
 
         // Initialize Home Assistant client
         ESP_LOGI(TAG, "Connecting to Home Assistant...");
@@ -517,6 +556,8 @@ void app_main(void)
                     ESP_LOGI(TAG, "Registering Home Assistant entities...");
 
                     // Sensors
+                    mqtt_ha_register_sensor("network_type", "Network Type", NULL, NULL);
+                    mqtt_ha_register_sensor("ip_address", "IP Address", NULL, NULL);
                     mqtt_ha_register_sensor("wifi_rssi", "WiFi Signal", "dBm", "signal_strength");
                     mqtt_ha_register_sensor("free_memory", "Free Memory", "KB", NULL);
                     mqtt_ha_register_sensor("uptime", "Uptime", "s", "duration");

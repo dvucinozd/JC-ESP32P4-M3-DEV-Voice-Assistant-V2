@@ -126,3 +126,26 @@ bool wifi_is_connected(void)
     EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
     return (bits & WIFI_CONNECTED_BIT) != 0;
 }
+
+esp_err_t wifi_manager_stop(void)
+{
+    ESP_LOGI(TAG, "Stopping WiFi (switching to Ethernet priority)...");
+
+    if (s_wifi_event_group != NULL) {
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+
+    esp_err_t ret = esp_wifi_disconnect();
+    if (ret != ESP_OK && ret != ESP_ERR_WIFI_NOT_STARTED) {
+        ESP_LOGW(TAG, "WiFi disconnect failed: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_wifi_stop();
+    if (ret != ESP_OK && ret != ESP_ERR_WIFI_NOT_STARTED) {
+        ESP_LOGW(TAG, "WiFi stop failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "WiFi stopped successfully");
+    }
+
+    return ESP_OK;
+}

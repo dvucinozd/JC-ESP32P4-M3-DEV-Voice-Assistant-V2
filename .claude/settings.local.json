@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant && C:\\Espressif\\frameworks\\esp-idf-v5.5\\export.bat >nul 2>&1 && idf.py build 2>&1 | findstr /C:\"error:\" /C:\"Linking\" /C:\"Successfully\" | head -10\")",
+      "Bash(git commit:*)",
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant &amp;&amp; if exist build\\esp32-p4-voice-assistant.bin (echo BUILD SUCCESS - Binary exists) else (echo BUILD IN PROGRESS or FAILED)\")",
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant && if exist build\\esp32-p4-voice-assistant.bin (echo BUILD SUCCESS - Binary exists) else (echo BUILD IN PROGRESS or FAILED)\")",
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant && if exist build\\esp32-p4-voice-assistant.bin (echo BUILD SUCCESS && dir build\\esp32-p4-voice-assistant.bin | findstr esp32) else (echo BUILD FAILED)\")",
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant && python build.py\")",
+      "Bash(findstr:*)",
+      "Bash(cmd /c \"cd /d D:\\platformio\\P4\\esp32-p4-voice-assistant && C:\\Espressif\\frameworks\\esp-idf-v5.5\\export.bat >nul 2>&1 && idf.py build 2>&1 | findstr /I /C:\"error\" /C:\"failed\" /C:\"Successfully\" /C:\"Linking\"\")",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(git tag:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

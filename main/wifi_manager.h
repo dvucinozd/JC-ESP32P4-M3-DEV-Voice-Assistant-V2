@@ -34,6 +34,31 @@ esp_err_t wifi_init_sta(void);
  */
 bool wifi_is_connected(void);
 
+/**
+ * @brief Alias for wifi_init_sta (for network manager)
+ *
+ * @return ESP_OK on success
+ */
+static inline esp_err_t wifi_manager_init(void) {
+    return wifi_init_sta();
+}
+
+/**
+ * @brief Check if WiFi is active (for network manager)
+ *
+ * @return true if WiFi is active
+ */
+static inline bool wifi_manager_is_active(void) {
+    return wifi_is_connected();
+}
+
+/**
+ * @brief Stop WiFi (for Ethernet failover)
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t wifi_manager_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

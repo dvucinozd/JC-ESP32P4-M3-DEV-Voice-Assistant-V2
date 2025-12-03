@@ -1,0 +1,134 @@
+=====================================================================
+WiFi IMPLEMENTATION - ESP32-P4 Voice Assistant
+=====================================================================
+
+WHAT WAS ADDED:
+===============
+
+1. ESP WiFi Remote Component (idf_component.yml)
+   - espressif/esp_wifi_remote >= 0.14.0
+   - Auto-pulls: esp_hosted, eppp_link, esp_serial_slave_link
+
+2. WiFi Manager Code (main/wifi_manager.c + wifi_manager.h)
+   - Handles WiFi station mode connection
+   - Uses ESP32-C6 coprocessor via SDIO
+   - Event-based connection management
+   - Auto-retry on connection failure (5 attempts)
+
+3. SDK Configuration (sdkconfig.defaults)
+   - CONFIG_ESP_WIFI_REMOTE_ENABLED=y
+   - CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
+
+4. Main Application Updated (mp3_player.c)
+   - Added NVS initialization (required for WiFi)
+   - WiFi initialization before audio setup
+   - Non-blocking - continues if WiFi fails
+
+=====================================================================
+HOW IT WORKS:
+=============
+
+ESP32-P4 → SDIO → ESP32-C6 → WiFi Radio
+
+1. P4 sends WiFi commands via SDIO to C6
+2. C6 handles actual WiFi radio operations
+3. Network stack runs on P4
+4. Transparent to application (uses standard esp_wifi API)
+
+=====================================================================
+WIFI CONFIGURATION:
+===================
+
+Location: main/config.h
+
+Current settings:
+- SSID: "ZAKLJUCANO"
+- Password: "Onkjnn121"
+- Max retry: 5 attempts
+- Auth mode: WPA2-PSK (with WPA3-SAE support)
+
+=====================================================================
+BUILD NOTES:
+============
+
+First build will:
+- Download esp_wifi_remote component from ESP Component Registry
+- Download esp_hosted (SDIO driver)
+- Download dependencies (eppp_link, esp_serial_slave_link)
+- Take longer than usual (~5-10 minutes)
+
+The components will be cached in:
+  managed_components/
+
+=====================================================================
+EXPECTED OUTPUT AFTER FLASH:
+=============================
+
+I (xxx) mp3_player: ===== ESP32-P4 Voice Assistant Starting =====
+I (xxx) mp3_player: NVS initialized
+I (xxx) mp3_player: Initializing ES8311 audio codec...
+I (xxx) Adev_Codec: Open codec device OK
+I (xxx) mp3_player: ES8311 codec initialized successfully
+I (xxx) mp3_player: Initializing WiFi (ESP32-C6 via SDIO)...
+I (xxx) wifi_manager: Initializing WiFi via ESP32-C6 (SDIO)...
+I (xxx) wifi_manager: WiFi init finished. Waiting for connection...
+I (xxx) wifi_manager: Got IP:192.168.0.xxx
+I (xxx) wifi_manager: Connected to AP SSID:ZAKLJUCANO
+I (xxx) mp3_player: WiFi connected successfully!
+W (xxx) mp3_player: No SD card detected - MP3 player disabled
+I (xxx) mp3_player: Audio codec is ready for Voice Assistant development
+
+=====================================================================
+TROUBLESHOOTING:
+================
+
+If WiFi fails to connect:
+
+1. Check ESP32-C6 firmware:
+   - C6 must have ESP-Hosted firmware flashed
+   - Verify C6 is powered and accessible via SDIO
+
+2. Check SDIO pins (config.h):
+   - D0: GPIO39
+   - D1: GPIO40
+   - D2: GPIO41
+   - D3: GPIO42
+   - CLK: GPIO43
+   - CMD: GPIO44
+
+3. Check credentials in config.h:
+   - WIFI_SSID must match your network
+   - WIFI_PASSWORD must be correct
+
+4. Monitor logs:
+   - Look for SDIO communication errors
+   - Check for C6 initialization messages
+
+=====================================================================
+NEXT STEPS:
+===========
+
+After WiFi is working:
+
+1. Add mDNS for Home Assistant discovery
+2. Implement WebSocket client for HA communication
+3. Add Assist Pipeline integration
+4. Implement wake word detection
+5. Integrate STT/TTS with Home Assistant
+
+=====================================================================
+FILES MODIFIED/CREATED:
+=======================
+
+New files:
+- main/wifi_manager.c
+- main/wifi_manager.h
+- WIFI_IMPLEMENTATION.txt (this file)
+
+Modified files:
+- main/idf_component.yml (added esp_wifi_remote)
+- main/CMakeLists.txt (added wifi_manager.c)
+- main/mp3_player.c (added NVS + WiFi init)
+- sdkconfig.defaults (added WiFi Remote config)
+
+=====================================================================

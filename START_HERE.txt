@@ -1,0 +1,107 @@
+=====================================================================
+ESP32-P4 VOICE ASSISTANT - BUILD & FLASH INSTRUCTIONS
+=====================================================================
+
+PROJEKT JE SPREMAN! Slijedi koraci ispod:
+
+---------------------------------------------------------------------
+KORAK 1: Otvori Windows Command Prompt
+---------------------------------------------------------------------
+
+1. Pritisni Windows Key + R
+2. Upisi: cmd
+3. Klikni OK
+
+---------------------------------------------------------------------
+KORAK 2: Navigate to Project
+---------------------------------------------------------------------
+
+Kopiraj i paste ovu liniju u Command Prompt:
+
+cd D:\platformio\P4\esp32-p4-voice-assistant
+
+Pritisni ENTER
+
+---------------------------------------------------------------------
+KORAK 3: BUILD Project
+---------------------------------------------------------------------
+
+Upisi:
+
+build.bat
+
+Pritisni ENTER
+
+Cekaj 5-10 minuta (prvi build je spor)
+
+---------------------------------------------------------------------
+KORAK 4: FLASH na Board
+---------------------------------------------------------------------
+
+Nakon uspjesnog builda, upisi:
+
+flash.bat
+
+Pritisni ENTER
+
+Board mora biti spojen na COM13!
+
+=====================================================================
+ALTERNATIVE METHOD - Using ESP-IDF CMD Directly
+=====================================================================
+
+1. Start Menu → Search "ESP-IDF"
+2. Click "ESP-IDF 5.5 CMD"
+3. Navigate to: cd D:\platformio\P4\esp32-p4-voice-assistant
+4. Build: idf.py build
+5. Flash: idf.py -p COM13 flash monitor
+
+=====================================================================
+WHAT TO EXPECT
+=====================================================================
+
+After flashing, you should see in serial monitor:
+
+[INFO] ESP32P4 MIPI DSI LVGL
+[INFO] SD card mount successfully  (if SD card present)
+[INFO] Codec initialized
+[INFO] Playing audio... (if MP3 files on SD card)
+
+If you hear sound from speaker → SUCCESS! ✓
+
+=====================================================================
+TROUBLESHOOTING
+=====================================================================
+
+Build fails:
+→ Make sure you're in Windows CMD (not Git Bash!)
+→ ESP-IDF must be installed in C:\Espressif\
+
+Flash fails:
+→ Check board is on COM13 (Device Manager)
+→ Try different USB cable
+→ Press Reset button
+
+No sound:
+→ Check speaker connection
+→ Verify logs show "Codec initialized"
+
+=====================================================================
+PROJECT FILES
+=====================================================================
+
+README.md - Complete documentation
+GETTING_STARTED.md - Step-by-step guide
+SUMMARY.md - Project overview
+BUILD_INSTRUCTIONS.txt - Build reference
+
+=====================================================================
+NEXT STEPS (After First Flash)
+=====================================================================
+
+1. Verify audio output works
+2. Test with MP3 files on SD card
+3. Check serial logs for errors
+4. Ready for Voice Assistant development!
+
+=====================================================================
