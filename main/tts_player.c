@@ -55,6 +55,11 @@ static esp_err_t play_mp3_buffer(uint8_t *mp3_data, size_t mp3_size)
     bsp_extra_codec_mute_set(false);
     ESP_LOGI(TAG, "Codec unmuted for TTS playback");
 
+    // Reset codec configuration flag for this playback session
+    // This ensures codec is reconfigured on first MP3 frame
+    static bool codec_configured_flag = false;
+    codec_configured_flag = false;
+
     // PCM output buffer
     int16_t *pcm_buffer = (int16_t *)malloc(PCM_BUFFER_SIZE);
     if (pcm_buffer == NULL) {
@@ -89,15 +94,17 @@ static esp_err_t play_mp3_buffer(uint8_t *mp3_data, size_t mp3_size)
             ESP_LOGD(TAG, "Decoded frame: %d Hz, %d ch, %d samples",
                      frame_info.samprate, frame_info.nChans, frame_info.outputSamps);
 
-            // Configure I2S for this sample rate if needed
-            static int last_sample_rate = 0;
-            if (frame_info.samprate != last_sample_rate) {
-                ESP_LOGI(TAG, "Setting codec to %d Hz", frame_info.samprate);
-                // Use open-only function to avoid closing already-closed channels
-                extern esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
-                bsp_extra_codec_open_playback(frame_info.samprate, 16,
-                                              (i2s_slot_mode_t)frame_info.nChans);
-                last_sample_rate = frame_info.samprate;
+            // Configure I2S for this sample rate on first frame
+            // Always reconfigure to handle cases where beep tone changed codec settings
+            if (!codec_configured_flag) {
+                ESP_LOGI(TAG, "Configuring codec: %d Hz, %d channels",
+                         frame_info.samprate, frame_info.nChans);
+                // Use set_fs to properly reconfigure both playback and record devices
+                // This is critical after beep tone which uses 16kHz MONO
+                extern esp_err_t bsp_extra_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
+                bsp_extra_codec_set_fs(frame_info.samprate, 16,
+                                       (i2s_slot_mode_t)frame_info.nChans);
+                codec_configured_flag = true;
             }
 
             // Write PCM data to I2S
