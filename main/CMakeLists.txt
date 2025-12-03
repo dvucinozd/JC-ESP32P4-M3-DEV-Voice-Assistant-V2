@@ -1,6 +1,7 @@
 idf_component_register(SRCS "mp3_player.c"
                             "wifi_manager.c"
                             "network_manager.c"
+                            "sdcard_manager.c"
                             "ha_client.c"
                             "tts_player.c"
                             "audio_capture.c"

@@ -24,6 +24,7 @@
 #include "button_gpio.h"
 #include "wifi_manager.h"
 #include "network_manager.h"
+#include "sdcard_manager.h"
 #include "ha_client.h"
 #include "tts_player.h"
 #include "audio_capture.h"
@@ -92,14 +93,44 @@ static void network_event_callback(network_type_t type, bool connected)
             mqtt_ha_update_sensor("ip_address", ip_str);
         }
 
-        // If Ethernet is active, SD card will be enabled in subsequent phases
+        // Mount/unmount SD card based on network type
         if (type == NETWORK_TYPE_ETHERNET) {
-            ESP_LOGI(TAG, "📀 Ethernet active - SD card music will be available (Phase 4)");
+            ESP_LOGI(TAG, "📀 Ethernet active - mounting SD card for local music...");
+            esp_err_t sd_ret = sdcard_manager_init();
+            if (sd_ret == ESP_OK) {
+                ESP_LOGI(TAG, "✅ SD card mounted successfully - local music playback enabled");
+                // Update MQTT sensor for SD card status
+                if (mqtt_ha_is_connected()) {
+                    mqtt_ha_update_sensor("sd_card_status", "mounted");
+                }
+            } else {
+                ESP_LOGW(TAG, "⚠️  SD card mount failed - local music unavailable");
+                if (mqtt_ha_is_connected()) {
+                    mqtt_ha_update_sensor("sd_card_status", "failed");
+                }
+            }
         } else if (type == NETWORK_TYPE_WIFI) {
             ESP_LOGI(TAG, "📶 WiFi fallback active - SD card disabled");
+            // Unmount SD card if it was mounted
+            if (sdcard_manager_is_mounted()) {
+                ESP_LOGI(TAG, "Unmounting SD card (WiFi fallback mode)...");
+                sdcard_manager_deinit();
+                if (mqtt_ha_is_connected()) {
+                    mqtt_ha_update_sensor("sd_card_status", "unmounted");
+                }
+            }
         }
     } else {
         ESP_LOGW(TAG, "Network disconnected: %s", network_manager_type_to_string(type));
+
+        // Unmount SD card on network disconnect
+        if (sdcard_manager_is_mounted()) {
+            ESP_LOGI(TAG, "Unmounting SD card (network disconnected)...");
+            sdcard_manager_deinit();
+            if (mqtt_ha_is_connected()) {
+                mqtt_ha_update_sensor("sd_card_status", "disconnected");
+            }
+        }
     }
 }
 
@@ -267,6 +298,13 @@ static void mqtt_status_update_task(void *arg)
                 mqtt_ha_update_sensor("ip_address", ip_str);
             }
             mqtt_ha_update_sensor("network_type", network_manager_type_to_string(network_manager_get_active_type()));
+
+            // Update SD card status
+            if (sdcard_manager_is_mounted()) {
+                mqtt_ha_update_sensor("sd_card_status", "mounted");
+            } else {
+                mqtt_ha_update_sensor("sd_card_status", "not_mounted");
+            }
 
             // Update configuration numbers (only on first iteration or when changed)
             static bool config_published = false;
@@ -558,6 +596,7 @@ void app_main(void)
                     // Sensors
                     mqtt_ha_register_sensor("network_type", "Network Type", NULL, NULL);
                     mqtt_ha_register_sensor("ip_address", "IP Address", NULL, NULL);
+                    mqtt_ha_register_sensor("sd_card_status", "SD Card Status", NULL, NULL);
                     mqtt_ha_register_sensor("wifi_rssi", "WiFi Signal", "dBm", "signal_strength");
                     mqtt_ha_register_sensor("free_memory", "Free Memory", "KB", NULL);
                     mqtt_ha_register_sensor("uptime", "Uptime", "s", "duration");
