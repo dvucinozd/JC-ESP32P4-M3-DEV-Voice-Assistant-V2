@@ -12,6 +12,7 @@
 #include "esp_wifi_remote.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "nvs_flash.h"
 
 #include "config.h"
@@ -55,8 +56,19 @@ esp_err_t wifi_init_sta(void)
 {
     s_wifi_event_group = xEventGroupCreate();
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // Initialize netif and event loop (skip if already done by network_manager)
+    esp_err_t ret = esp_netif_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to init netif");
+        return ret;
+    }
+
+    ret = esp_event_loop_create_default();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to create event loop");
+        return ret;
+    }
+
     esp_netif_create_default_wifi_sta();
 
     ESP_LOGI(TAG, "Initializing WiFi via ESP32-C6 (SDIO)...");

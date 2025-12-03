@@ -247,9 +247,25 @@ esp_err_t network_manager_init(void)
     ESP_LOGI(TAG, "Priority: Ethernet → WiFi fallback");
     ESP_LOGI(TAG, "========================================");
 
+    // Initialize TCP/IP stack (required for both Ethernet and WiFi)
+    esp_err_t ret = esp_netif_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize TCP/IP stack: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "TCP/IP stack initialized");
+
+    // Create default event loop (required for network events)
+    ret = esp_event_loop_create_default();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to create event loop: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "Event loop ready");
+
     // Register WiFi IP event handler
-    esp_err_t ret = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                ip_event_handler, NULL);
+    ret = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                      ip_event_handler, NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register WiFi IP event handler");
     }
