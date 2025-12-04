@@ -10,6 +10,7 @@
 #include "audio_player.h"
 #include "esp_log.h"
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "local_music";
 
@@ -141,9 +142,23 @@ esp_err_t local_music_player_deinit(void)
     // Delete BSP audio player
     bsp_extra_player_del();
 
-    // Delete file iterator
+    // Delete file iterator (manual cleanup since file_iterator_delete doesn't exist)
     if (file_iterator) {
-        file_iterator_delete(file_iterator);
+        // Free file list
+        if (file_iterator->list) {
+            for (size_t i = 0; i < file_iterator->count; i++) {
+                if (file_iterator->list[i]) {
+                    free(file_iterator->list[i]);
+                }
+            }
+            free(file_iterator->list);
+        }
+        // Free directory path
+        if (file_iterator->directory_path) {
+            free((void*)file_iterator->directory_path);
+        }
+        // Free instance
+        free(file_iterator);
         file_iterator = NULL;
     }
     total_tracks = 0;
