@@ -14,6 +14,17 @@
 #include "port_esp_hosted_host_os.h"
 #include "hci_drv.h"
 
+#ifndef __WEAK__
+#  if defined(__GNUC__) || defined(__clang__)
+#    define __WEAK__ __attribute__((weak))
+#  elif defined(_MSC_VER)
+#    define __WEAK__ __declspec(selectany)
+#  else
+#    define __WEAK__
+#  endif
+#endif
+
+
 #if H_BT_HOST_ESP_NIMBLE
 #include "host/ble_hs_mbuf.h"
 #include "os/os_mbuf.h"

@@ -15,7 +15,6 @@ set(COMPONENT_SRCS
 	"stats.c"
 	"mempool_ll.c"
 	"host_power_save.c"
-	"lwip_filter.c"
 )
 
 set(COMPONENT_ADD_INCLUDEDIRS
@@ -26,6 +25,31 @@ set(COMPONENT_ADD_INCLUDEDIRS
 	"${common_dir}/rpc"
 	"${common_dir}/transport"
 )
+
+# Conditional component registration based on ESP-IDF version
+set(component_requires "")
+
+# Always needed components
+list(APPEND component_requires esp_timer bt protocomm nvs_flash app_update)
+
+#Check for new driver components (IDF ≥ 5.0) vs legacy driver component (IDF ≤ 4.4)
+if(EXISTS "${IDF_PATH}/components/esp_driver_sdio")
+    message(STATUS "Using new driver components (IDF ≥ 5.0)")
+    list(APPEND component_requires esp_driver_sdio esp_driver_spi esp_driver_uart esp_driver_gpio)
+else()
+    message(STATUS "Using legacy driver component (IDF ≤ 4.4)")
+    list(APPEND component_requires driver)
+endif()
+
+# Check for protobuf-c component
+if(EXISTS "${IDF_PATH}/components/protobuf-c")
+    list(APPEND component_requires protobuf-c)
+endif()
+
+# Set COMPONENT_REQUIRES to include all necessary components
+set(COMPONENT_REQUIRES ${component_requires})
+
+set(COMPONENT_PRIV_REQUIRES wpa_supplicant)
 
 # Select BT UART code based on IDF Target
 if(CONFIG_IDF_TARGET_ESP32)
@@ -46,13 +70,7 @@ else(CONFIG_ESP_UART_HOST_INTERFACE)
     list(APPEND COMPONENT_SRCS uart_slave_api.c)
 endif()
 
-if(CONFIG_ESP_HOSTED_COPROCESSOR_EXAMPLE_MQTT)
-    list(APPEND COMPONENT_SRCS mqtt_example.c)
-endif()
 
-if(CONFIG_ESP_HOSTED_COPROCESSOR_EXAMPLE_HTTP_CLIENT)
-    list(APPEND COMPONENT_SRCS http_req.c)
-endif()
 
 # cli
 list(APPEND COMPONENT_ADD_INCLUDEDIRS "${common_dir}/utils")

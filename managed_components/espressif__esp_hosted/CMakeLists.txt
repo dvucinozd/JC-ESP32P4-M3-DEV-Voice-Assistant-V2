@@ -122,9 +122,17 @@ if(CONFIG_ESP_HOSTED_ENABLED)
 
 endif()
 
+if(EXISTS "${IDF_PATH}/components/esp_driver_sdio")
+    message(STATUS "Using new driver components (IDF ≥ 5.0)")
+    list(APPEND driver_requires esp_driver_sdmmc esp_driver_spi esp_driver_uart esp_driver_gpio)
+else()
+    message(STATUS "Using legacy driver component (IDF ≤ 4.4)")
+    list(APPEND driver_requires driver)
+endif()
+
 idf_component_register(SRCS ${srcs}
-	PRIV_REQUIRES soc esp_event esp_netif esp_timer esp_wifi bt esp_http_client console wpa_supplicant esp_driver_spi esp_driver_gpio
-	REQUIRES esp_driver_sdmmc esp_driver_uart
+	PRIV_REQUIRES soc esp_event esp_netif esp_timer driver esp_wifi bt esp_http_client console wpa_supplicant
+	REQUIRES ${driver_requires}
 	INCLUDE_DIRS ${pub_include}
 	PRIV_INCLUDE_DIRS ${priv_include})
 
@@ -142,13 +150,3 @@ endif()
 # endif()
 
 
-idf_component_get_property(lwip lwip COMPONENT_LIB)
-if(TARGET ${lwip})
-	# Use generator expressions to only apply to non-INTERFACE targets
-	get_target_property(lwip_type ${lwip} TYPE)
-	if(NOT lwip_type STREQUAL "INTERFACE_LIBRARY")
-		message(STATUS "********** Configuring LWIP for network split mode with custom hook **********")
-		target_include_directories(${lwip} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/common")
-		target_compile_definitions(${lwip} PRIVATE "-DESP_IDF_LWIP_HOOK_FILENAME=\"${CMAKE_CURRENT_SOURCE_DIR}/common/esp_hosted_lwip_src_port_hook.h\"")
-	endif()
-endif()

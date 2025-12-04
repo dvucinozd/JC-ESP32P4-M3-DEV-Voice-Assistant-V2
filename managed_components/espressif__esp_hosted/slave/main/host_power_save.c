@@ -46,7 +46,6 @@ int is_host_wakeup_needed(interface_buffer_handle_t *buf_handle)
 
 	buf_start = buf_handle->payload;
 
-
 #if CONFIG_ESP_SPI_HD_HOST_INTERFACE || CONFIG_ESP_UART_HOST_INTERFACE || CONFIG_ESP_SPI_HOST_INTERFACE
 	/* Flow control packet cannot miss */
 	if (buf_handle->wifi_flow_ctrl_en) {
@@ -92,9 +91,6 @@ int is_host_wakeup_needed(interface_buffer_handle_t *buf_handle)
 
 		case ESP_STA_IF:
 
-			  /* TODO: parse packet if lwip split not configured.
-			   * Decide if packets need to reach to host or not
-			   **/
 			  strlcpy(reason, "sta tx msg", sizeof(reason));
 			  wakup_needed = 1;
 			  goto end;
@@ -121,7 +117,6 @@ end:
 	return wakup_needed;
 }
 
-
 int host_power_save_init(void (*fn_host_wakeup_cb)(void))
 {
 #if H_HOST_PS_ALLOWED
@@ -134,7 +129,6 @@ int host_power_save_init(void (*fn_host_wakeup_cb)(void))
 		.mode=GPIO_MODE_OUTPUT,
 		.pin_bit_mask=(1ULL<<GPIO_HOST_WAKEUP)
 	};
-
 
 	ESP_LOGI(TAG, "Host wakeup: IO%u, level:%u", GPIO_HOST_WAKEUP, gpio_get_level(GPIO_HOST_WAKEUP));
 	gpio_config(&io_conf);

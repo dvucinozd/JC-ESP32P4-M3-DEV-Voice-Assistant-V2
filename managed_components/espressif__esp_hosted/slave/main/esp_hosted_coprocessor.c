@@ -19,7 +19,7 @@
 #endif
 #include "esp_private/wifi.h"
 #include "interface.h"
-#include "esp_wpa.h"
+//#include "esp_wpa.h"
 #include "esp_hosted_coprocessor.h"
 #include "driver/gpio.h"
 
@@ -44,14 +44,6 @@
 #include "esp_hosted_cli.h"
 #include "host_power_save.h"
 
-#if CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-	#include "esp_hosted_rpc.pb-c.h"
-	volatile uint8_t station_got_ip = 0;
-	#define H_SLAVE_LWIP_DHCP_AT_SLAVE       1
-#endif
-
-#include "lwip_filter.h"
-
 static const char *TAG = "co-pro-main";
 
 #define BYPASS_TX_PRIORITY_Q 1
@@ -62,7 +54,6 @@ static const char *TAG = "co-pro-main";
 
 #define ETH_DATA_LEN                     1500
 #define MAX_WIFI_STA_TX_RETRY            2
-
 
 volatile uint8_t datapath = 0;
 volatile uint8_t station_connected = 0;
@@ -209,7 +200,6 @@ static inline esp_err_t populate_buff_handle(interface_buffer_handle_t *buf_hand
 #define populate_wifi_buffer_handle(Buf_hdL, TypE, BuF, LeN) \
 	populate_buff_handle(Buf_hdL, TypE, BuF, LeN, esp_wifi_internal_free_rx_buffer, eb, 0, 0, 0);
 
-
 esp_err_t wlan_ap_rx_callback(void *buffer, uint16_t len, void *eb)
 {
 	interface_buffer_handle_t buf_handle = {0};
@@ -264,80 +254,6 @@ esp_err_t wlan_sta_rx_callback(void *buffer, uint16_t len, void *eb)
 
 	ESP_HEXLOGV("STA_Get", buffer, len, 32);
 
-#if ESP_PKT_STATS
-	pkt_stats.sta_lwip_in++;
-#endif
-
-#ifdef CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-	hosted_l2_bridge bridge_to_use = HOST_LWIP_BRIDGE;
-
-	/* Filtering based on destination port */
-	bridge_to_use = filter_and_route_packet(buffer, len);
-
-
-	switch (bridge_to_use) {
-		case HOST_LWIP_BRIDGE:
-			/* Send to Host */
-			if (!datapath) {
-				/* Drop packet */
-				if (eb) {
-					esp_wifi_internal_free_rx_buffer(eb);
-				}
-				return ESP_OK;
-			}
-			ESP_LOGV(TAG, "host packet");
-			populate_wifi_buffer_handle(&buf_handle, ESP_STA_IF, buffer, len);
-
-			if (unlikely(send_to_host_queue(&buf_handle, PRIO_Q_OTHERS)))
-				goto DONE;
-
-    #if ESP_PKT_STATS
-			pkt_stats.sta_sh_in++;
-			pkt_stats.sta_host_lwip_out++;
-    #endif
-			break;
-
-		case SLAVE_LWIP_BRIDGE:
-			/* Send to local LWIP */
-			ESP_LOGV(TAG, "slave packet");
-			esp_netif_receive(slave_sta_netif, buffer, len, eb);
-    #if ESP_PKT_STATS
-			pkt_stats.sta_slave_lwip_out++;
-    #endif
-			break;
-
-		case BOTH_LWIP_BRIDGE:
-			ESP_LOGV(TAG, "slave & host packet");
-
-			void * copy_buff = malloc(len);
-			assert(copy_buff);
-			memcpy(copy_buff, buffer, len);
-
-			/* slave LWIP */
-			esp_netif_receive(slave_sta_netif, buffer, len, eb);
-			//netif would free eb after processing
-
-			ESP_LOGV(TAG, "slave & host packet");
-
-			/* Host LWIP, free up wifi buffers */
-			populate_buff_handle(&buf_handle, ESP_STA_IF, copy_buff, len, free, copy_buff, 0, 0, 0);
-			if (unlikely(send_to_host_queue(&buf_handle, PRIO_Q_OTHERS))) {
-				/* Free copy_buff since we couldn't queue it */
-				free(copy_buff);
-				return ESP_OK;
-			}
-
-    #if ESP_PKT_STATS
-			pkt_stats.sta_sh_in++;
-			pkt_stats.sta_both_lwip_out++;
-    #endif
-			break;
-
-		default:
-			ESP_LOGV(TAG, "Packet filtering failed, drop packet");
-			goto DONE;
-	}
-#else
 	if (!datapath) {
 		/* Drop packet */
 		if (eb) {
@@ -354,9 +270,7 @@ esp_err_t wlan_sta_rx_callback(void *buffer, uint16_t len, void *eb)
 
   #if ESP_PKT_STATS
 	pkt_stats.sta_sh_in++;
-	pkt_stats.sta_host_lwip_out++;
   #endif
-#endif
 	return ESP_OK;
 
 DONE:
@@ -522,7 +436,6 @@ static void process_serial_rx_pkt(uint8_t *buf)
 	}
 }
 
-
 static int host_to_slave_reconfig(uint8_t *evt_buf, uint16_t len)
 {
 	uint8_t len_left = len, tag_len;
@@ -610,10 +523,6 @@ static int host_to_slave_reconfig(uint8_t *evt_buf, uint16_t len)
 		pos += (tag_len+2);
 		len_left -= (tag_len+2);
 	}
-#if CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-	/* Host should be in position to get DHCP/DNS info */
-	//send_dhcp_dns_info_to_host(1, 0);
-#endif
 	return ESP_OK;
 }
 
@@ -654,7 +563,6 @@ static void process_rx_pkt(interface_buffer_handle_t *buf_handle)
 	payload_len = le16toh(header->len);
 
 	ESP_HEXLOGD("bus_RX", buf_handle->payload, buf_handle->payload_len, 32);
-
 
 	if (buf_handle->if_type == ESP_STA_IF && station_connected) {
 		/* Forward data to wlan driver */
@@ -925,38 +833,6 @@ static void register_reset_pin(uint32_t gpio_num)
 	}
 }
 #endif
-#ifdef CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-void create_slave_sta_netif(uint8_t dhcp_at_slave)
-{
-	/* Create "almost" default station, but with un-flagged DHCP client */
-	esp_netif_inherent_config_t netif_cfg;
-	memcpy(&netif_cfg, ESP_NETIF_BASE_DEFAULT_WIFI_STA, sizeof(netif_cfg));
-
-	if (!dhcp_at_slave)
-		netif_cfg.flags &= ~ESP_NETIF_DHCP_CLIENT;
-
-	esp_netif_config_t cfg_sta = {
-		.base = &netif_cfg,
-		.stack = ESP_NETIF_NETSTACK_DEFAULT_WIFI_STA,
-	};
-	esp_netif_t *netif_sta = esp_netif_new(&cfg_sta);
-	assert(netif_sta);
-
-	ESP_ERROR_CHECK(esp_netif_attach_wifi_station(netif_sta));
-	ESP_ERROR_CHECK(esp_wifi_set_default_wifi_sta_handlers());
-
-	if (!dhcp_at_slave) {
-		ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif_sta));
-		ESP_LOGI(TAG, "No DHCP at slave");
-	} else {
-		ESP_LOGI(TAG, "DHCP at slave");
-		/* TODO: Is below line needed? */
-		//ESP_ERROR_CHECK(esp_netif_dhcpc_start(netif_sta));
-	}
-
-	slave_sta_netif = netif_sta;
-}
-#endif
 
 #ifdef CONFIG_ESP_HOSTED_USE_EXAMPLE_WIFI_PRE_PROVISION_CONFIG
 #define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
@@ -991,7 +867,6 @@ void create_slave_sta_netif(uint8_t dhcp_at_slave)
 #elif CONFIG_ESP_WIFI_AUTH_WAPI_PSK
   #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WAPI_PSK
 #endif
-
 
 static int fallback_to_sdkconfig_wifi_config(void)
 {
@@ -1038,7 +913,7 @@ static bool wifi_is_provisioned(void)
 }
 #endif
 
-#if defined(CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED) || defined(CONFIG_ESP_HOSTED_USE_EXAMPLE_WIFI_PRE_PROVISION_CONFIG)
+#if defined(CONFIG_ESP_HOSTED_USE_EXAMPLE_WIFI_PRE_PROVISION_CONFIG)
 static int connect_sta(void)
 {
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -1092,8 +967,6 @@ static int connect_sta(void)
 }
 #endif
 
-
-
 static void host_wakeup_callback(void)
 {
 #if H_HOST_PS_ALLOWED
@@ -1135,21 +1008,10 @@ esp_err_t esp_hosted_coprocessor_init(void)
 		xSemaphoreGive(host_reset_sem);
 #endif
 
-#if CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-	ESP_ERROR_CHECK(esp_netif_init());
-#endif
 	ESP_ERROR_CHECK(esp_event_loop_create_default());
 
 #if defined(CONFIG_ESP_GPIO_SLAVE_RESET) && (CONFIG_ESP_GPIO_SLAVE_RESET != -1)
 	register_reset_pin(CONFIG_ESP_GPIO_SLAVE_RESET);
-#endif
-
-#if defined(CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED) && defined(CONFIG_ESP_HOSTED_HOST_RESERVED_PORTS_CONFIGURED)
-	ESP_LOGI(TAG, "Configuring host static port forwarding rules from slave kconfig");
-	configure_host_static_port_forwarding_rules(CONFIG_ESP_HOSTED_HOST_RESERVED_TCP_SRC_PORTS,
-												CONFIG_ESP_HOSTED_HOST_RESERVED_TCP_DEST_PORTS,
-												CONFIG_ESP_HOSTED_HOST_RESERVED_UDP_SRC_PORTS,
-												CONFIG_ESP_HOSTED_HOST_RESERVED_UDP_DEST_PORTS);
 #endif
 
 	pc_pserial = protocomm_new();
@@ -1193,22 +1055,7 @@ esp_err_t esp_hosted_coprocessor_init(void)
 
 	create_debugging_tasks();
 
-#ifdef CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-
-	create_slave_sta_netif(H_SLAVE_LWIP_DHCP_AT_SLAVE);
-
-	ESP_LOGI(TAG, "Default LWIP post filtering packets to send: %s",
-#if defined(CONFIG_ESP_DEFAULT_LWIP_SLAVE)
-			"slave. Host need to use **static netif** only"
-#elif defined(CONFIG_ESP_DEFAULT_LWIP_HOST)
-			"host"
-#elif defined(CONFIG_ESP_DEFAULT_LWIP_BOTH)
-			"host+slave"
-#endif
-			);
-#endif
-
-#if defined(CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED) || defined(CONFIG_ESP_HOSTED_USE_EXAMPLE_WIFI_PRE_PROVISION_CONFIG)
+#if defined(CONFIG_ESP_HOSTED_USE_EXAMPLE_WIFI_PRE_PROVISION_CONFIG)
 	connect_sta();
 #endif
 
@@ -1236,12 +1083,5 @@ void app_main(void)
 	ESP_ERROR_CHECK( ret );
 
 	esp_hosted_coprocessor_init();
-
-#ifdef CONFIG_ESP_HOSTED_NETWORK_SPLIT_ENABLED
-#ifdef ESP_HOSTED_COPROCESSOR_EXAMPLE_HTTP_CLIENT
-	extern void slave_http_req_example(void);
-	slave_http_req_example();
-#endif
-#endif
 
 }

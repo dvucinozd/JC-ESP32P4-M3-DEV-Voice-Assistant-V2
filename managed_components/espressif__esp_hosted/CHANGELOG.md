@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.0
+
+### Bug Fixes
+Restructured the ESP-Hosted-MCU commits
+
 ## 2.6.8
 
 ### Bug Fixes
@@ -105,7 +110,7 @@ Minor fixes in Slave OTA example
 
 ### Bug Fixes
 
-- Fixed build break when Network Split and CLI Commands are enabled on coprocessor
+- Fixed build break when CLI Commands are enabled on coprocessor
 
 ## 2.5.6
 
@@ -303,4 +308,4 @@ Minor fixes in Slave OTA example
 
 ### Bug Fixes
 
-- Fixed SoftAP operation after integration of lwIP split code
+- Fixed SoftAP operation issues
