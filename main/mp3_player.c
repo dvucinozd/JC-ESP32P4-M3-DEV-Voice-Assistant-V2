@@ -34,6 +34,7 @@
 #include "wwd.h"
 #include "mqtt_ha.h"
 #include "ota_update.h"
+#include "webserial.h"
 #include "config.h"
 
 #define TAG             "mp3_player"
@@ -228,6 +229,30 @@ static void mqtt_wwd_switch_callback(const char *entity_id, const char *payload)
         audio_capture_stop();
         mqtt_ha_update_switch("wwd_enabled", false);
         ESP_LOGI(TAG, "Wake Word Detection disabled via MQTT");
+    }
+}
+
+static void mqtt_webserial_switch_callback(const char *entity_id, const char *payload)
+{
+    ESP_LOGI(TAG, "MQTT: WebSerial switch = %s", payload);
+
+    if (strcmp(payload, "ON") == 0) {
+        if (!webserial_is_running()) {
+            esp_err_t ret = webserial_init();
+            if (ret == ESP_OK) {
+                mqtt_ha_update_switch("webserial_enabled", true);
+                ESP_LOGI(TAG, "WebSerial enabled via MQTT");
+            } else {
+                ESP_LOGE(TAG, "Failed to start WebSerial");
+                mqtt_ha_update_switch("webserial_enabled", false);
+            }
+        }
+    } else {
+        if (webserial_is_running()) {
+            webserial_deinit();
+            mqtt_ha_update_switch("webserial_enabled", false);
+            ESP_LOGI(TAG, "WebSerial disabled via MQTT");
+        }
     }
 }
 
@@ -460,6 +485,12 @@ static void mqtt_status_update_task(void *arg)
 
             // Update WWD state
             mqtt_ha_update_switch("wwd_enabled", wwd_is_running());
+
+            // Update WebSerial status
+            mqtt_ha_update_switch("webserial_enabled", webserial_is_running());
+            char webserial_clients_str[8];
+            snprintf(webserial_clients_str, sizeof(webserial_clients_str), "%d", webserial_get_client_count());
+            mqtt_ha_update_sensor("webserial_clients", webserial_clients_str);
 
             // Update network status
             char ip_str[16];
@@ -845,6 +876,10 @@ void app_main(void)
 
                     // Switches
                     mqtt_ha_register_switch("wwd_enabled", "Wake Word Detection", mqtt_wwd_switch_callback);
+                    mqtt_ha_register_switch("webserial_enabled", "WebSerial Console", mqtt_webserial_switch_callback);
+
+                    // Sensors - WebSerial
+                    mqtt_ha_register_sensor("webserial_clients", "WebSerial Clients", NULL, NULL);
 
                     // Buttons - System
                     mqtt_ha_register_button("restart", "Restart Device", mqtt_restart_callback);
@@ -886,7 +921,7 @@ void app_main(void)
                     mqtt_ha_register_number("wwd_threshold", "WWD Detection Threshold",
                                            0.3, 0.9, 0.05, NULL, mqtt_wwd_threshold_callback);
 
-                    ESP_LOGI(TAG, "Home Assistant entities registered (13 sensors, 1 switch, 9 buttons, 5 numbers)");
+                    ESP_LOGI(TAG, "Home Assistant entities registered (14 sensors, 2 switches, 9 buttons, 5 numbers)");
 
                     // Start MQTT status update task
                     xTaskCreate(mqtt_status_update_task, "mqtt_status", 4096, NULL, 3, NULL);
