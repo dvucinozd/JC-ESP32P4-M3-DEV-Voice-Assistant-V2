@@ -10,5 +10,5 @@ idf_component_register(SRCS "mp3_player.c"
                             "mqtt_ha.c"
                             "beep_tone.c"
                     INCLUDE_DIRS "."
-                    REQUIRES espressif__esp_websocket_client espressif__mdns json espressif__esp32_p4_function_ev_board bsp_extra chmorgan__esp-libhelix-mp3 espressif__esp-sr mqtt esp_eth
+                    REQUIRES espressif__esp_websocket_client espressif__mdns json espressif__esp32_p4_function_ev_board bsp_extra chmorgan__esp-libhelix-mp3 chmorgan__esp-file-iterator chmorgan__esp-audio-player espressif__esp-sr mqtt esp_eth
                     PRIV_REQUIRES esp_wifi driver nvs_flash esp_netif esp_event spiffs fatfs esp_http_client)
