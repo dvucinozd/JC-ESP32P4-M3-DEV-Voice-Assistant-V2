@@ -172,9 +172,20 @@ static void network_event_callback(network_type_t type, bool connected)
     }
 }
 
+// Track if music was paused for TTS
+static bool music_paused_for_tts = false;
+
 static void tts_audio_handler(const uint8_t *audio_data, size_t length)
 {
     ESP_LOGI(TAG, "Received TTS audio: %d bytes", length);
+
+    // Pause music if playing (TTS takes priority)
+    if (local_music_player_is_initialized() &&
+        local_music_player_get_state() == MUSIC_STATE_PLAYING) {
+        ESP_LOGI(TAG, "Pausing music for TTS playback");
+        local_music_player_pause();
+        music_paused_for_tts = true;
+    }
 
     // Feed audio to TTS player
     esp_err_t ret = tts_player_feed(audio_data, length);
@@ -494,6 +505,13 @@ static void wwd_audio_feed_wrapper(const int16_t *audio_data, size_t samples)
 static void tts_playback_complete_handler(void)
 {
     ESP_LOGI(TAG, "🔄 TTS playback complete - resuming wake word detection...");
+
+    // Resume music if it was paused for TTS
+    if (music_paused_for_tts && local_music_player_is_initialized()) {
+        ESP_LOGI(TAG, "Resuming music playback after TTS");
+        local_music_player_resume();
+        music_paused_for_tts = false;
+    }
 
     // Resume wake word detection
     wwd_start();
