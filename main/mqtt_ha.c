@@ -23,7 +23,7 @@ static const char *TAG = "mqtt_ha";
 #define STATE_PREFIX "esp32p4"
 
 // Entity tracking
-#define MAX_ENTITIES 30
+#define MAX_ENTITIES 40
 
 typedef struct {
   char entity_id[32];
