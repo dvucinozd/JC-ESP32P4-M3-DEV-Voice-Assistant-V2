@@ -273,6 +273,7 @@ esp_err_t mqtt_ha_register_sensor(const char *entity_id, const char *name,
   // Build discovery config
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);
@@ -309,6 +310,7 @@ esp_err_t mqtt_ha_register_switch(const char *entity_id, const char *name,
   // Build discovery config
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);
@@ -352,6 +354,7 @@ esp_err_t mqtt_ha_register_number(const char *entity_id, const char *name,
   // Build discovery config
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);
@@ -394,6 +397,7 @@ esp_err_t mqtt_ha_register_select(const char *entity_id, const char *name,
   // Build discovery config
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);
@@ -438,6 +442,7 @@ esp_err_t mqtt_ha_register_button(const char *entity_id, const char *name,
   // Build discovery config
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);
