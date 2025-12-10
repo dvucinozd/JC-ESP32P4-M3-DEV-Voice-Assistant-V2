@@ -209,10 +209,10 @@ esp_err_t local_music_player_play(void)
     // Clear manual stop flag - user explicitly pressed play
     manual_stop = false;
 
-    // Reconfigure codec for MP3 playback (44.1kHz stereo is standard for music MP3s)
+    // Reconfigure codec for MP3 playback (48kHz stereo for your MP3 files)
     // This is critical after voice recording which uses 16kHz mono
-    ESP_LOGI(TAG, "Configuring codec for music playback (44.1kHz stereo)");
-    esp_err_t codec_ret = bsp_extra_codec_set_fs(44100, 16, I2S_SLOT_MODE_STEREO);
+    ESP_LOGI(TAG, "Configuring codec for music playback (48kHz stereo)");
+    esp_err_t codec_ret = bsp_extra_codec_set_fs(48000, 16, I2S_SLOT_MODE_STEREO);
     if (codec_ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to reconfigure codec, music may play at wrong speed");
     }
@@ -341,8 +341,8 @@ esp_err_t local_music_player_next(void)
     manual_stop = false;
 
     // Reconfigure codec for MP3 playback
-    ESP_LOGI(TAG, "Configuring codec for music playback (44.1kHz stereo)");
-    esp_err_t codec_ret = bsp_extra_codec_set_fs(44100, 16, I2S_SLOT_MODE_STEREO);
+    ESP_LOGI(TAG, "Configuring codec for music playback (48kHz stereo)");
+    esp_err_t codec_ret = bsp_extra_codec_set_fs(48000, 16, I2S_SLOT_MODE_STEREO);
     if (codec_ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to reconfigure codec");
     }
@@ -383,8 +383,8 @@ esp_err_t local_music_player_previous(void)
     manual_stop = false;
 
     // Reconfigure codec for MP3 playback
-    ESP_LOGI(TAG, "Configuring codec for music playback (44.1kHz stereo)");
-    esp_err_t codec_ret = bsp_extra_codec_set_fs(44100, 16, I2S_SLOT_MODE_STEREO);
+    ESP_LOGI(TAG, "Configuring codec for music playback (48kHz stereo)");
+    esp_err_t codec_ret = bsp_extra_codec_set_fs(48000, 16, I2S_SLOT_MODE_STEREO);
     if (codec_ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to reconfigure codec");
     }
