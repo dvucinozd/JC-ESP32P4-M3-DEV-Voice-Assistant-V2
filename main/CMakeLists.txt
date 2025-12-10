@@ -1,4 +1,4 @@
-idf_component_register(SRCS "connection_manager.c" "agc.c" "mp3_player.c"
+idf_component_register(SRCS "connection_manager.c" "agc.c" "main.c"
                             "wifi_manager.c"
                             "network_manager.c"
                             "local_music_player.c"
