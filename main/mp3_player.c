@@ -1130,6 +1130,15 @@ void app_main(void) {
           mqtt_ha_update_number("agc_target_level", (float)agc_target_level);
           // ═══════════════════════════════════════════════════════════════════
 
+          // ═══════════════════════════════════════════════════════════════════
+          // Initialize LED status
+          // ═══════════════════════════════════════════════════════════════════
+          mqtt_ha_update_switch("led_enabled", led_status_is_enabled());
+          mqtt_ha_update_number("led_brightness", (float)led_status_get_brightness());
+          ESP_LOGI(TAG, "LED status initialized: %s, brightness: %u%%",
+                   led_status_is_enabled() ? "ON" : "OFF", led_status_get_brightness());
+          // ═══════════════════════════════════════════════════════════════════
+
           xTaskCreate(mqtt_status_update_task, "mqtt_status", 4096, NULL, 3,
                       NULL);
           ESP_LOGI(TAG, "MQTT status update task started");
