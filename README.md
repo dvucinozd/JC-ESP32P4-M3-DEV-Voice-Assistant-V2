@@ -12,6 +12,7 @@ Lokalni glasovni asistent za Home Assistant baziran na ESP32-P4 platformi, imple
 **Highlights (current build):**
 - ✅ Wake word detection (WakeNet9 "Hi ESP") with confirmation beep and warmup skip
 - ✅ Hands-free pipeline: wake -> VAD -> HA STT/intent -> TTS playback -> auto resume wake word mode
+- ✅ **Voice-controlled timers** with Croatian/Cyrillic support ("namjesti timer na 10 sekundi")
 - ✅ MQTT HA auto-discovery: sensors (wifi_rssi, free_memory, uptime), WWD switch, restart/test-TTS buttons, VAD/WWD tuning numbers
 - ✅ WiFi via ESP32-C6 SDIO, mDNS hostname/IP fallback, HA WebSocket + TTS download
 - ✅ Codec stability: set_fs reconfigure between microphone, beep tone, and TTS playback
@@ -179,11 +180,11 @@ See `MQTT_INTEGRATION.md` for dashboard examples and topic references.
 esp32-p4-voice-assistant/
   main/
     CMakeLists.txt
-    mp3_player.c                    # Main application entry point
+    main.c                          # Main application entry point (renamed from mp3_player.c)
     mqtt_ha.c / mqtt_ha.h           # MQTT HA discovery + entities/controls
     beep_tone.c / beep_tone.h       # Wake confirmation tone
     wifi_manager.c / wifi_manager.h # WiFi connectivity (ESP32-C6 SDIO)
-    ha_client.c / ha_client.h       # Home Assistant WebSocket/TTS client
+    ha_client.c / ha_client.h       # Home Assistant WebSocket/TTS + STT parser
     audio_capture.c / audio_capture.h # Microphone input (ES8311) + VAD
     wwd.c / wwd.h                   # Wake Word Detection (WakeNet9)
     tts_player.c / tts_player.h     # TTS MP3 decoder & playback
@@ -191,6 +192,7 @@ esp32-p4-voice-assistant/
     led_status.c / led_status.h     # RGB LED status indicator with effects
     ota_update.c / ota_update.h     # OTA firmware update handler
     local_music_player.c / .h       # SD card music player with HA integration
+    timer_manager.c / timer_manager.h # FreeRTOS timer/alarm manager with SNTP
     config.h.example                # Sample credentials (copy to config.h)
     Kconfig.projbuild
   common_components/
@@ -277,13 +279,68 @@ esp32-p4-voice-assistant/
 - [x] Auto-stop wake word during music playback
 - [x] Manual stop flag to prevent auto-resume
 
-### Phase 10: Advanced Features 🚧 TODO
+### Phase 10: Voice-Controlled Timers ✅ COMPLETED
+- [x] FreeRTOS-based timer manager with SNTP synchronization
+- [x] Croatian STT parser (text + numeric format support)
+- [x] Cyrillic language support (тајмер, секунди, минут)
+- [x] Text-based numbers 1-60 ("osam", "deset", "dvadeset")
+- [x] Automatic wake word detection resume after timer completion
+- [x] Audio feedback (confirmation beeps + timer finished beeps @ 90% volume)
+- [x] TTS skip for successful timer commands
+- [x] Intent callback architecture for HA conversation integration
+
+### Phase 11: Advanced Features 🚧 TODO
+- [ ] Voice-controlled alarms with time parsing
 - [ ] Audio preprocessing (noise reduction)
 - [ ] Acoustic Echo Cancellation (AEC)
 - [ ] Multi-wake word support
 - [ ] Display integration (MIPI-DSI)
 - [ ] Battery monitoring
 - [ ] Bluetooth speaker output
+
+---
+
+## ⏱️ Voice-Controlled Timers
+
+Set countdown timers using natural Croatian voice commands - the device parses your speech locally and manages timers without relying on Home Assistant's built-in timer functionality.
+
+### Supported Commands
+
+**Croatian (Latin):**
+- "Namjesti timer na 10 sekundi" → 10-second timer
+- "Namjesti timer na pet minuta" → 5-minute timer
+- "Namjesti tajmer na dvadeset sekundi" → 20-second timer
+- "Namjesti timer na 1 minutu" → 1-minute timer
+
+**Croatian (Cyrillic):**
+- "Намести тајмер на 10 секунди" → 10-second timer
+- "Намести тајмер на пет минута" → 5-minute timer
+
+### Supported Number Formats
+
+**Text-based (1-60):**
+- jedan/jedna/jednu, dva/dvije, tri, četiri, pet, šest, sedam, osam, devet, deset
+- jedanaest through devetnaest (11-19)
+- dvadeset, trideset, četrdeset, pedeset, šezdeset (20, 30, 40, 50, 60)
+
+**Numeric:**
+- Any number (e.g., "10 sekundi", "5 minuta", "30 sekundi")
+
+### Audio Feedback
+
+- **2 quick beeps (1200Hz @ 90%):** Timer started successfully
+- **3 beeps (1000Hz @ 90%):** Timer finished
+- Wake word detection automatically resumes after timer completion
+
+### How It Works
+
+1. Say "Hi ESP" to wake the device
+2. Say your timer command (e.g., "namjesti timer na 10 sekundi")
+3. Hear 2 confirmation beeps → timer is running
+4. After countdown: 3 beeps → timer finished
+5. Device automatically returns to wake word mode
+
+**Note:** The device parses Croatian timer commands directly from the speech-to-text transcript, bypassing Home Assistant's native timer system. This provides faster response times and works even when HA doesn't recognize timer intents.
 
 ---
 
@@ -477,8 +534,8 @@ MIT License - Open source za educational i development svrhe.
 
 ---
 
-**Status:** ✅ **FULLY FUNCTIONAL** - Complete voice assistant with music player, OTA, and LED feedback
-**Last Updated:** 2025-12-10
+**Status:** ✅ **FULLY FUNCTIONAL** - Complete voice assistant with timers, music player, OTA, and LED feedback
+**Last Updated:** 2025-12-12
 
 ---
 
