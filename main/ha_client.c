@@ -38,8 +38,14 @@ static ha_tts_audio_callback_t tts_audio_callback = NULL;
 // Pipeline error callback
 static ha_pipeline_error_callback_t error_callback = NULL;
 
+// Intent callback
+static ha_intent_callback_t intent_callback = NULL;
+
 // STT binary handler ID (received from run-start event)
 static int stt_binary_handler_id = -1;
+
+// Flag to track if a timer was successfully started (to skip negative HA response)
+static bool timer_started_this_conversation = false;
 
 // Event group for tracking connection state
 static EventGroupHandle_t ha_event_group;
@@ -152,6 +158,9 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
             if (strcmp(event_type->valuestring, "run-start") == 0) {
               ESP_LOGI(TAG, "Pipeline started");
 
+              // Reset timer flag for new conversation
+              timer_started_this_conversation = false;
+
               // Extract STT binary handler ID for audio streaming
               if (data_obj) {
                 cJSON *runner_data =
@@ -175,6 +184,112 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
                   cJSON *text = cJSON_GetObjectItem(stt_output, "text");
                   if (text && text->valuestring) {
                     ESP_LOGI(TAG, "STT Transcript: '%s'", text->valuestring);
+
+                    // Parse timer commands from STT text
+                    if (intent_callback) {
+                      const char *transcript = text->valuestring;
+                      char transcript_lower[256];
+
+                      // Convert to lowercase for matching
+                      strncpy(transcript_lower, transcript, sizeof(transcript_lower) - 1);
+                      transcript_lower[sizeof(transcript_lower) - 1] = '\0';
+                      for (int i = 0; transcript_lower[i]; i++) {
+                        transcript_lower[i] = tolower((unsigned char)transcript_lower[i]);
+                      }
+
+                      // Check for timer keywords (Latin + Cyrillic)
+                      if (strstr(transcript_lower, "timer") != NULL ||
+                          strstr(transcript_lower, "tajmer") != NULL ||
+                          strstr(transcript, "тајмер") != NULL ||
+                          strstr(transcript, "Тајмер") != NULL) {
+
+                        int duration_min = 0, duration_sec = 0;
+                        bool timer_found = false;
+
+                        // Helper: Parse Croatian text numbers (1-60)
+                        const char *text_numbers[] = {
+                          "jedan", "jedna", "jednu", "dva", "dvije", "tri", "četiri", "pet",
+                          "šest", "sedam", "osam", "devet", "deset",
+                          "jedanaest", "dvanaest", "trinaest", "četrnaest", "petnaest",
+                          "šesnaest", "sedamnaest", "osamnaest", "devetnaest", "dvadeset",
+                          "trideset", "četrdeset", "pedeset", "šezdeset"
+                        };
+                        const int text_values[] = {
+                          1, 1, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                          11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 30, 40, 50, 60
+                        };
+
+                        // Try to parse different timer formats
+                        // First check for text-based seconds
+                        if (strstr(transcript_lower, "sekund")) {
+                          for (int i = 0; i < sizeof(text_values)/sizeof(text_values[0]); i++) {
+                            if (strstr(transcript_lower, text_numbers[i])) {
+                              duration_sec = text_values[i];
+                              timer_found = true;
+                              break;
+                            }
+                          }
+                        }
+                        // Then check for text-based minutes (only if seconds not found)
+                        if (!timer_found && (strstr(transcript_lower, "minut"))) {
+                          for (int i = 0; i < sizeof(text_values)/sizeof(text_values[0]); i++) {
+                            if (strstr(transcript_lower, text_numbers[i])) {
+                              duration_min = text_values[i];
+                              timer_found = true;
+                              break;
+                            }
+                          }
+                        }
+
+                        // Fallback to numeric parsing if text-based parsing failed
+                        // Check for numeric formats - try seconds FIRST (more specific)
+                        if (!timer_found && (strstr(transcript_lower, "sekund") || strstr(transcript, "секунд"))) {
+                          // Format: "X sekundi/sekunda/sekunde" (Latin or Cyrillic)
+                          int num = 0;
+                          if (sscanf(transcript, "%*s %*s %*s %d", &num) == 1 ||
+                              sscanf(transcript, "%*s %*s %d", &num) == 1) {
+                            duration_sec = num;
+                            timer_found = true;
+                          }
+                        }
+                        // Then try minutes
+                        if (!timer_found && (strstr(transcript_lower, "minut") || strstr(transcript, "минут"))) {
+                          // Format: "X minuta/minute/minuti" (Latin or Cyrillic)
+                          int num = 0;
+                          if (sscanf(transcript, "%*s %*s %*s %d", &num) == 1 ||
+                              sscanf(transcript, "%*s %*s %d", &num) == 1) {
+                            duration_min = num;
+                            timer_found = true;
+                          }
+                        }
+
+                        if (timer_found) {
+                          int total_seconds = (duration_min * 60) + duration_sec;
+                          if (total_seconds > 0) {
+                            // Create synthetic intent data with proper name
+                            char intent_data[256];
+                            char timer_name[64];
+                            if (duration_min > 0 && duration_sec > 0) {
+                              snprintf(timer_name, sizeof(timer_name), "%dm %ds timer", duration_min, duration_sec);
+                            } else if (duration_min > 0) {
+                              snprintf(timer_name, sizeof(timer_name), "%d minute timer", duration_min);
+                            } else {
+                              snprintf(timer_name, sizeof(timer_name), "%d second timer", duration_sec);
+                            }
+
+                            snprintf(intent_data, sizeof(intent_data),
+                                   "{\"targets\":[{\"type\":\"timer\",\"name\":\"%s\",\"duration\":%d}]}",
+                                   timer_name, total_seconds);
+
+                            ESP_LOGI(TAG, "🎯 Detected timer command: %d seconds", total_seconds);
+                            intent_callback("timer", intent_data, NULL);
+
+                            // Mark that timer was started to skip negative HA TTS
+                            timer_started_this_conversation = true;
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -187,6 +302,42 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
                 if (intent_output) {
                   cJSON *conversation_id =
                       cJSON_GetObjectItem(intent_output, "conversation_id");
+
+                  // Extract intent response data
+                  cJSON *response = cJSON_GetObjectItem(intent_output, "response");
+                  if (response) {
+                    cJSON *response_type = cJSON_GetObjectItem(response, "response_type");
+                    cJSON *data = cJSON_GetObjectItem(response, "data");
+
+                    // Check for action_done response (successful intent execution)
+                    if (response_type && response_type->valuestring &&
+                        strcmp(response_type->valuestring, "action_done") == 0 && data) {
+
+                      // Extract intent name from targets
+                      cJSON *targets = cJSON_GetObjectItem(data, "targets");
+                      if (targets && cJSON_IsArray(targets) && cJSON_GetArraySize(targets) > 0) {
+                        cJSON *target = cJSON_GetArrayItem(targets, 0);
+                        cJSON *type = cJSON_GetObjectItem(target, "type");
+
+                        if (type && type->valuestring) {
+                          ESP_LOGI(TAG, "Intent action: %s", type->valuestring);
+
+                          // Call intent callback with full data JSON
+                          if (intent_callback) {
+                            char *data_str = cJSON_PrintUnformatted(data);
+                            if (data_str) {
+                              intent_callback(type->valuestring, data_str,
+                                            conversation_id && conversation_id->valuestring
+                                                ? conversation_id->valuestring
+                                                : NULL);
+                              cJSON_free(data_str);
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+
                   ESP_LOGI(TAG, "Intent matched (conv: %s)",
                            conversation_id && conversation_id->valuestring
                                ? conversation_id->valuestring
@@ -196,7 +347,10 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
             } else if (strcmp(event_type->valuestring, "tts-start") == 0) {
               ESP_LOGI(TAG, "Text-to-Speech started");
             } else if (strcmp(event_type->valuestring, "tts-end") == 0) {
-              if (data_obj) {
+              // Skip TTS if timer was successfully started (avoid "cannot set timer" message)
+              if (timer_started_this_conversation) {
+                ESP_LOGI(TAG, "Skipping HA TTS (timer already started with confirmation beep)");
+              } else if (data_obj) {
                 cJSON *tts_output = cJSON_GetObjectItem(data_obj, "tts_output");
                 if (tts_output) {
                   // Get TTS URL for downloading audio
@@ -222,6 +376,13 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
               }
             } else if (strcmp(event_type->valuestring, "run-end") == 0) {
               ESP_LOGI(TAG, "Pipeline completed");
+
+              // If timer was started and TTS was skipped, signal completion to resume wake word
+              if (timer_started_this_conversation && conversation_callback) {
+                ESP_LOGI(TAG, "Signaling pipeline completion (timer path)");
+                conversation_callback("", NULL); // Empty string signals timer completion
+              }
+
               // Reset handler ID for next run
               stt_binary_handler_id = -1;
             } else if (strcmp(event_type->valuestring, "error") == 0) {
@@ -648,6 +809,11 @@ void ha_client_register_tts_audio_callback(ha_tts_audio_callback_t callback) {
 void ha_client_register_error_callback(ha_pipeline_error_callback_t callback) {
   error_callback = callback;
   ESP_LOGI(TAG, "Pipeline error callback registered");
+}
+
+void ha_client_register_intent_callback(ha_intent_callback_t callback) {
+  intent_callback = callback;
+  ESP_LOGI(TAG, "Intent callback registered");
 }
 
 esp_err_t ha_client_request_tts(const char *text) {

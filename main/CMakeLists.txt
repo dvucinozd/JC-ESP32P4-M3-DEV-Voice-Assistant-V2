@@ -12,6 +12,7 @@ idf_component_register(SRCS "connection_manager.c" "agc.c" "main.c"
                             "ota_update.c"
                             "webserial.c"
                             "led_status.c"
+                            "timer_manager.c"
                     INCLUDE_DIRS "."
                     REQUIRES espressif__esp_websocket_client espressif__mdns json espressif__esp32_p4_function_ev_board bsp_extra chmorgan__esp-libhelix-mp3 chmorgan__esp-file-iterator chmorgan__esp-audio-player espressif__esp-sr mqtt esp_eth
                     PRIV_REQUIRES esp_wifi driver nvs_flash esp_netif esp_event spiffs fatfs esp_http_client app_update esp_https_ota esp_http_server)

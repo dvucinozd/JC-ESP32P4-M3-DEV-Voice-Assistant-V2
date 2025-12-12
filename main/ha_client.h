@@ -95,6 +95,15 @@ typedef void (*ha_tts_audio_callback_t)(const uint8_t *audio_data, size_t length
 typedef void (*ha_pipeline_error_callback_t)(const char *error_code, const char *error_message);
 
 /**
+ * @brief Callback for intent recognition results
+ *
+ * @param intent_name Name of the recognized intent (e.g., "SetTimer", "CancelTimer")
+ * @param intent_data JSON string with intent parameters/slots (caller must NOT free)
+ * @param conversation_id Associated conversation ID
+ */
+typedef void (*ha_intent_callback_t)(const char *intent_name, const char *intent_data, const char *conversation_id);
+
+/**
  * @brief Register callback for conversation responses
  *
  * @param callback Function to call when HA sends conversation response
@@ -114,6 +123,13 @@ void ha_client_register_tts_audio_callback(ha_tts_audio_callback_t callback);
  * @param callback Function to call when pipeline fails
  */
 void ha_client_register_error_callback(ha_pipeline_error_callback_t callback);
+
+/**
+ * @brief Register callback for intent recognition
+ *
+ * @param callback Function to call when intent is recognized
+ */
+void ha_client_register_intent_callback(ha_intent_callback_t callback);
 
 /**
  * @brief Stop Home Assistant client and disconnect

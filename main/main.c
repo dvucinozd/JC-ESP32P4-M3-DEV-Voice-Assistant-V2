@@ -22,8 +22,10 @@
 #include <string.h>
 
 #include "audio_capture.h"
+#include "beep_tone.h"
 #include "bsp/esp32_p4_function_ev_board.h"
 #include "button_gpio.h"
+#include "cJSON.h"
 #include "config.h"
 #include "connection_manager.h"
 #include "file_iterator.h"
@@ -34,6 +36,7 @@
 #include "mqtt_ha.h"
 #include "network_manager.h"
 #include "ota_update.h"
+#include "timer_manager.h"
 #include "tts_player.h"
 #include "webserial.h"
 #include "wifi_manager.h"
@@ -45,9 +48,41 @@
 
 // Forward declarations
 static void music_player_event_handler(music_state_t state, int current_track, int total_tracks);
+static void timer_finished_callback(uint8_t timer_id, const char *timer_name);
+static void alarm_triggered_callback(uint8_t alarm_id, const char *alarm_label);
+static void intent_handler(const char *intent_name, const char *intent_data, const char *conversation_id);
+static void wwd_audio_feed_wrapper(const int16_t *audio_data, size_t samples);
 
 static void conversation_response_handler(const char *response_text,
                                           const char *conversation_id) {
+  // Check if this is a timer completion signal (empty string from run-end)
+  if (response_text && strlen(response_text) == 0) {
+    ESP_LOGI(TAG, "🔄 Timer pipeline completed - resuming wake word detection...");
+
+    // Set LED back to IDLE
+    led_status_set(LED_STATUS_IDLE);
+
+    if (mqtt_ha_is_connected()) {
+      mqtt_ha_update_sensor("va_status", "SPREMAN");
+    }
+
+    // Stop any ongoing audio capture before resuming wake word
+    audio_capture_stop();
+    vTaskDelay(pdMS_TO_TICKS(100)); // Small delay to ensure task stops
+
+    // Stop WWD if it's already running (avoid "WWD already running" warning)
+    wwd_stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // Resume wake word detection
+    wwd_start();
+    audio_capture_start_wake_word_mode(wwd_audio_feed_wrapper);
+    vTaskDelay(pdMS_TO_TICKS(100)); // Give I2S time to initialize before task starts reading
+
+    ESP_LOGI(TAG, "✅ Wake word detection resumed - ready for next command");
+    return;
+  }
+
   ESP_LOGI(TAG, "HA Response [%s]: %s",
            conversation_id ? conversation_id : "none", response_text);
 
@@ -803,6 +838,193 @@ static void music_player_event_handler(music_state_t state, int current_track, i
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TIMER FINISHED CALLBACK
+// ═══════════════════════════════════════════════════════════════════════════
+static void timer_finished_callback(uint8_t timer_id, const char *timer_name) {
+  ESP_LOGI(TAG, "⏰ Timer finished: %d '%s'", timer_id, timer_name);
+
+  // Update MQTT sensor
+  if (mqtt_ha_is_connected()) {
+    mqtt_ha_update_sensor("timer_status", "finished");
+    mqtt_ha_update_sensor("timer_finished", timer_name ? timer_name : "");
+  }
+
+  // Stop audio capture before playing beeps (beep_tone reinitializes I2S)
+  ESP_LOGI(TAG, "Stopping wake word detection for timer beeps...");
+  audio_capture_stop();
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  // Play beep sound (3 beeps)
+  for (int i = 0; i < 3; i++) {
+    beep_tone_play(1000, 200, 90); // 1kHz, 200ms, 90% volume
+    vTaskDelay(pdMS_TO_TICKS(300));
+  }
+
+  // Resume wake word detection
+  ESP_LOGI(TAG, "Resuming wake word detection after timer beeps...");
+  vTaskDelay(pdMS_TO_TICKS(200)); // Delay after last beep for codec to stabilize
+
+  // Stop WWD if it's already running (avoid "WWD already running" warning)
+  wwd_stop();
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  wwd_start();
+  audio_capture_start_wake_word_mode(wwd_audio_feed_wrapper);
+  vTaskDelay(pdMS_TO_TICKS(100)); // Give I2S time to initialize before task starts reading
+
+  ESP_LOGI(TAG, "Timer notification complete");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ALARM TRIGGERED CALLBACK
+// ═══════════════════════════════════════════════════════════════════════════
+static void alarm_triggered_callback(uint8_t alarm_id, const char *alarm_label) {
+  ESP_LOGI(TAG, "⏰ Alarm triggered: %d '%s'", alarm_id, alarm_label);
+
+  // Get current time
+  char time_str[32];
+  timer_manager_get_time_string(time_str, sizeof(time_str));
+  ESP_LOGI(TAG, "Current time: %s", time_str);
+
+  // Update MQTT sensor
+  if (mqtt_ha_is_connected()) {
+    mqtt_ha_update_sensor("alarm_status", "triggered");
+    mqtt_ha_update_sensor("alarm_triggered", alarm_label ? alarm_label : "");
+  }
+
+  // Stop audio capture before playing beeps (beep_tone reinitializes I2S)
+  ESP_LOGI(TAG, "Stopping wake word detection for alarm beeps...");
+  audio_capture_stop();
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  // Play alarm sound (continuous beeps for 5 seconds)
+  for (int i = 0; i < 10; i++) {
+    beep_tone_play(1500, 250, 90); // 1.5kHz, 250ms, 90% volume
+    vTaskDelay(pdMS_TO_TICKS(250));
+  }
+
+  // Resume wake word detection
+  ESP_LOGI(TAG, "Resuming wake word detection after alarm beeps...");
+  vTaskDelay(pdMS_TO_TICKS(200)); // Delay after last beep for codec to stabilize
+
+  // Stop WWD if it's already running (avoid "WWD already running" warning)
+  wwd_stop();
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  wwd_start();
+  audio_capture_start_wake_word_mode(wwd_audio_feed_wrapper);
+  vTaskDelay(pdMS_TO_TICKS(100)); // Give I2S time to initialize before task starts reading
+
+  ESP_LOGI(TAG, "Alarm notification complete");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INTENT HANDLER (Timer/Alarm Voice Commands)
+// ═══════════════════════════════════════════════════════════════════════════
+static void intent_handler(const char *intent_name, const char *intent_data, const char *conversation_id) {
+  ESP_LOGI(TAG, "🎯 Intent recognized: %s", intent_name);
+  ESP_LOGI(TAG, "Intent data: %s", intent_data);
+
+  // Parse intent data JSON
+  cJSON *data = cJSON_Parse(intent_data);
+  if (!data) {
+    ESP_LOGW(TAG, "Failed to parse intent data JSON");
+    return;
+  }
+
+  // Extract targets array
+  cJSON *targets = cJSON_GetObjectItem(data, "targets");
+  if (!targets || !cJSON_IsArray(targets) || cJSON_GetArraySize(targets) == 0) {
+    ESP_LOGW(TAG, "No targets in intent data");
+    cJSON_Delete(data);
+    return;
+  }
+
+  cJSON *target = cJSON_GetArrayItem(targets, 0);
+
+  // Check for timer-related intents
+  if (strstr(intent_name, "timer") != NULL || strstr(intent_name, "Timer") != NULL) {
+
+    int duration_sec = 0;
+    const char *timer_name = "Voice Timer";
+
+    // First check if duration is directly provided (from STT parsing)
+    cJSON *duration_field = cJSON_GetObjectItem(target, "duration");
+    if (duration_field && cJSON_IsNumber(duration_field)) {
+      duration_sec = duration_field->valueint;
+      ESP_LOGI(TAG, "Timer duration from intent: %d seconds", duration_sec);
+    }
+    // Otherwise, try to parse from target name
+    else {
+      cJSON *name = cJSON_GetObjectItem(target, "name");
+      if (name && name->valuestring) {
+        ESP_LOGI(TAG, "Timer request: %s", name->valuestring);
+        timer_name = name->valuestring;
+
+        // Simple duration parsing (supports "X minute" or "X minuta")
+        int minutes = 0, seconds = 0;
+
+        // Try to parse minutes
+        if (sscanf(name->valuestring, "%d minute", &minutes) == 1 ||
+            sscanf(name->valuestring, "%d minuta", &minutes) == 1 ||
+            sscanf(name->valuestring, "%d min", &minutes) == 1) {
+          duration_sec = minutes * 60;
+        }
+        // Try to parse seconds
+        else if (sscanf(name->valuestring, "%d second", &seconds) == 1 ||
+                 sscanf(name->valuestring, "%d sekund", &seconds) == 1 ||
+                 sscanf(name->valuestring, "%d sec", &seconds) == 1) {
+          duration_sec = seconds;
+        }
+        // Try combined format "X minute Y second"
+        else if (sscanf(name->valuestring, "%d minute %d second", &minutes, &seconds) == 2 ||
+                 sscanf(name->valuestring, "%d minuta %d sekund", &minutes, &seconds) == 2) {
+          duration_sec = (minutes * 60) + seconds;
+        }
+      }
+    }
+
+    if (duration_sec > 0) {
+      ESP_LOGI(TAG, "Starting timer for %d seconds (%d minutes)", duration_sec, duration_sec / 60);
+
+      // Start timer using timer_manager
+      uint8_t timer_id;
+      esp_err_t ret = timer_manager_start_timer(timer_name, duration_sec, &timer_id);
+
+      if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Timer %d started successfully", timer_id);
+
+        // Play confirmation beep (2 quick beeps = success)
+        beep_tone_play(1200, 100, 90); // 1.2kHz, 100ms, 90% volume
+        vTaskDelay(pdMS_TO_TICKS(120));
+        beep_tone_play(1200, 100, 90);
+
+        // Update MQTT sensor
+        if (mqtt_ha_is_connected()) {
+          char timer_info[64];
+          snprintf(timer_info, sizeof(timer_info), "Timer %d: %ds", timer_id, duration_sec);
+          mqtt_ha_update_sensor("timer_status", timer_info);
+        }
+      } else {
+        ESP_LOGE(TAG, "❌ Failed to start timer (error: %d)", ret);
+
+        // Play error beep (low tone)
+        beep_tone_play(400, 300, 60);
+      }
+    } else {
+      ESP_LOGW(TAG, "Could not parse timer duration");
+    }
+  }
+  // Check for alarm-related intents
+  else if (strstr(intent_name, "alarm") != NULL || strstr(intent_name, "Alarm") != NULL) {
+    ESP_LOGI(TAG, "Alarm intent detected (not yet implemented)");
+    // TODO: Parse time from intent and create alarm
+  }
+
+  cJSON_Delete(data);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // VAD EVENT HANDLER
 // ═══════════════════════════════════════════════════════════════════════════
 static void vad_event_handler(audio_capture_vad_event_t event) {
@@ -1037,7 +1259,32 @@ void app_main(void) {
       ha_client_register_conversation_callback(conversation_response_handler);
       ha_client_register_tts_audio_callback(tts_audio_handler);
       ha_client_register_error_callback(pipeline_error_handler);
+      ha_client_register_intent_callback(intent_handler);
       tts_player_register_complete_callback(tts_playback_complete_handler);
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // Initialize Timer/Alarm Manager
+      // ═══════════════════════════════════════════════════════════════════════
+      ESP_LOGI(TAG, "Initializing Timer/Alarm Manager...");
+
+      // Initialize SNTP for time synchronization
+      timer_manager_init_sntp("CET-1CEST,M3.5.0,M10.5.0/3"); // Central European Time
+
+      timer_manager_config_t timer_config = {
+        .timer_finished_callback = timer_finished_callback,
+        .alarm_triggered_callback = alarm_triggered_callback,
+        .snooze_duration_sec = 600, // 10 minutes
+        .tts_notifications = true,
+        .play_sound = true
+      };
+
+      ret = timer_manager_init(&timer_config);
+      if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Timer/Alarm Manager initialized");
+      } else {
+        ESP_LOGW(TAG, "⚠️  Timer/Alarm Manager initialization failed");
+      }
+      // ═══════════════════════════════════════════════════════════════════════
 
       ESP_LOGI(TAG, "Initializing MQTT Home Assistant Discovery...");
       mqtt_ha_config_t mqtt_config = {.broker_uri = MQTT_BROKER_URI,
