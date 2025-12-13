@@ -6,7 +6,8 @@ Context
 - Board: JC-ESP32P4-M3-DEV (ESP32-P4, ES8311 codec, SD card).
 - Wake word: WakeNet9, model `wn9_hiesp`, 16 kHz mono, threshold 0.50.
 - HA Assist pipeline via WebSocket (`ws://kucni.local:9000/api/websocket`), MQTT broker `mqtt://192.168.0.163:1883`.
-- OTA URL (local server): `http://<PC_IP>:8080/build/esp32-p4-voice-assistant.bin`. `ota_server.bat` prints the URL.
+- OTA binary: `build/esp32_p4_voice_assistant.bin`.
+- OTA URL (local server): `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin` (`ota_server.bat` prints the URL).
 
 Recent fixes (Dec 2025)
 -----------------------
@@ -18,7 +19,7 @@ Build/Flash
 -----------
 - Build: `python build.py` (requires ESP-IDF 5.5 env). If shell lacks IDF activation, run the standard `export.bat`/`install.ps1` first.
 - Flash: `python flash.py -p COMXX` (default COM13). If COM port is busy, close all monitors/esptool or replug USB (sometimes Windows requires a reboot to release the port).
-- OTA: run `python -m http.server 8080` from repo root (or `ota_server.bat`); set URL to `http://<PC_IP>:8080/build/esp32-p4-voice-assistant.bin`, then trigger OTA via MQTT (`esp32p4/ota_url_input/set`, `esp32p4/ota_trigger/set = ON`) or HA button.
+- OTA: run `python -m http.server 8080` from repo root (or `ota_server.bat`); set URL to `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin`, then trigger OTA via MQTT (`esp32p4/ota_url_input/set`, `esp32p4/ota_trigger/set = ON`) or HA button.
 
 Runtime Tips
 ------------
@@ -33,7 +34,7 @@ Files touched in latest changes
 - `main/audio_capture.c` – warn on zero-byte reads.
 - `main/ha_client.c` – audio send timeout 500 ms.
 - `main/main.c` – guard delays around WWD resume; drop audio send errors to warn; skip streaming if HA not connected.
-- `ota_server.bat` – prints OTA URL pointing to `/build/esp32-p4-voice-assistant.bin`.
+- `ota_server.bat` – prints OTA URL pointing to `/build/esp32_p4_voice_assistant.bin`.
 
 Known quirks
 ------------

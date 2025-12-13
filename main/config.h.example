@@ -25,30 +25,6 @@
 #define HA_WEBSOCKET_PATH "/api/websocket"
 
 /* ============================================================================
- * Audio Configuration (ES8311 Codec)
- * ============================================================================ */
-// I2S Pins
-#define I2S_MCLK_PIN    GPIO_NUM_14
-#define I2S_BCLK_PIN    GPIO_NUM_12
-#define I2S_LRCLK_PIN   GPIO_NUM_13
-#define I2S_DIN_PIN     GPIO_NUM_10  // Microphone input
-#define I2S_DOUT_PIN    GPIO_NUM_9   // Speaker output
-
-// I2C Pins (ES8311 Control)
-#define I2C_SDA_PIN     GPIO_NUM_7
-#define I2C_SCL_PIN     GPIO_NUM_8
-#define I2C_FREQ_HZ     100000
-
-// Power Amplifier
-#define PA_ENABLE_PIN   GPIO_NUM_11
-
-// Audio Settings
-#define AUDIO_SAMPLE_RATE       16000  // Hz (16kHz for voice)
-#define AUDIO_BITS_PER_SAMPLE   16     // bits
-#define AUDIO_CHANNELS          1      // Mono
-#define AUDIO_BUFFER_SIZE       1024   // samples
-
-/* ============================================================================
  * ESP32-Hosted (WiFi via ESP32-C6)
  * ============================================================================ */
 #define SDIO_D0_PIN     GPIO_NUM_39
@@ -59,56 +35,9 @@
 #define SDIO_CLK_PIN    GPIO_NUM_43
 #define C6_RESET_PIN    GPIO_NUM_54  // Optional
 
-/* ============================================================================
- * Voice Assistant Configuration
+ * Notes
  * ============================================================================ */
-// Wake Word Detection (TODO: Not yet implemented)
-#define WAKE_WORD_ENABLED       false
-#define WAKE_WORD_THRESHOLD     0.85f
-#define WAKE_WORD_TIMEOUT_MS    5000
-
-// Voice Activity Detection (TODO: Not yet implemented)
-#define VAD_ENABLED             false
-#define VAD_THRESHOLD           500
-#define VAD_SILENCE_MS          1500
-
-// Audio Processing (TODO: Not yet implemented)
-#define ENABLE_AEC              false   // Acoustic Echo Cancellation
-#define ENABLE_NS               false   // Noise Suppression
-#define ENABLE_AGC              false   // Automatic Gain Control
-
-// Recording
-#define MAX_RECORDING_TIME_MS   10000   // Maximum voice command duration
-
-/* ============================================================================
- * LED Indicators (Optional - Not yet implemented)
- * ============================================================================ */
-#define LED_LISTENING_PIN   GPIO_NUM_15
-#define LED_PROCESSING_PIN  GPIO_NUM_16
-#define LED_ERROR_PIN       GPIO_NUM_17
-
-/* ============================================================================
- * System Configuration
- * ============================================================================ */
-#define DEVICE_NAME         "ESP32-P4 Voice Assistant"
-#define FIRMWARE_VERSION    "1.0.0"
-
-// FreeRTOS Task Priorities
-#define AUDIO_TASK_PRIORITY         5
-#define WIFI_TASK_PRIORITY          4
-#define VA_TASK_PRIORITY            6
-#define LED_TASK_PRIORITY           2
-
-// Stack Sizes
-#define AUDIO_TASK_STACK_SIZE       8192
-#define WIFI_TASK_STACK_SIZE        4096
-#define VA_TASK_STACK_SIZE          8192
-
-/* ============================================================================
- * Debug Configuration
- * ============================================================================ */
-#define DEBUG_AUDIO             1    // Enable audio debug logs
-#define DEBUG_WIFI              1    // Enable WiFi debug logs
-#define DEBUG_VA                1    // Enable voice assistant debug logs
+// Audio pins (I2S/I2C) are configured by the bundled BSP component for this board profile.
+// If you port to a different board, update the BSP pin mapping instead of editing this file.
 
 #endif // CONFIG_H

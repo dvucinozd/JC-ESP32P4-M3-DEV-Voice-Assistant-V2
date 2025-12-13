@@ -1,7 +1,7 @@
 # ESP32-P4 Voice Assistant - Project Summary
 
 ## Project Location
-Current workspace: `D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW`
+Current workspace: `D:\AI\ESP32P4\esp32-p4-voice-assistant`
 
 ## Capabilities (Current)
 - Home Assistant voice pipeline: wake word (WakeNet9 "Hi ESP") → VAD → STT/TTS via HA → playback
@@ -11,7 +11,7 @@ Current workspace: `D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW`
 
 ## Build & Flash (Windows CMD or ESP-IDF PowerShell)
 ```cmd
-cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
+cd D:\AI\ESP32P4\esp32-p4-voice-assistant
 build.bat
 flash.bat   rem uses COM13 by default; override with COM_PORT env
 ```
@@ -21,6 +21,12 @@ Manual commands:
 call C:\Espressif\frameworks\esp-idf-v5.5\export.bat
 idf.py build
 idf.py -p COM13 flash monitor
+```
+If `idf.py build` fails with `UnicodeEncodeError` in PowerShell, run:
+```powershell
+chcp 65001
+$env:PYTHONUTF8=1
+$env:PYTHONIOENCODING='utf-8'
 ```
 
 ## Configuration (main/config.h - not committed)
@@ -34,7 +40,7 @@ idf.py -p COM13 flash monitor
 
 ## Troubleshooting Hints
 - Use `idf.py -p <COM> monitor` for logs; exit with `Ctrl+]`
-- If codec audio is silent, confirm `bsp_extra_codec_mute_set(false)` log appears
+- If wakeword audio shows `peak=0 nz=0`, update firmware (ES8311 ADC path can be affected by codec reconfigure ordering)
 - For WiFi issues, verify ESP32-C6 ESP-Hosted firmware and SDIO wiring
 - MQTT entities not showing: check broker URI/creds and see `MQTT_INTEGRATION.md`
 

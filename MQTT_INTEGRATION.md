@@ -219,7 +219,7 @@ Ensure MQTT integration is configured in Home Assistant:
 
 - `main/mqtt_ha.h` - MQTT HA API header
 - `main/mqtt_ha.c` - MQTT client implementation
-- `main/mp3_player.c` - Main integration and callbacks
+- `main/main.c` - Main integration and callbacks
 
 ### Device Information
 

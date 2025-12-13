@@ -35,16 +35,20 @@ Lokalni glasovni asistent za Home Assistant baziran na ESP32-P4 platformi, imple
 
 **Audio (I2S + I2C):**
 ```
-I2S_MCLK:  GPIO14
 I2S_BCLK:  GPIO12
-I2S_LRCLK: GPIO13
-I2S_DIN:   GPIO10 (Microphone)
+I2S_MCLK:  GPIO13
+I2S_LRCLK: GPIO10
+I2S_DIN:   GPIO48 (Microphone)
 I2S_DOUT:  GPIO9  (Speaker)
 
 I2C_SDA:   GPIO7  (ES8311 Control)
 I2C_SCL:   GPIO8
 PA_EN:     GPIO11 (Amplifier Enable)
 ```
+
+**Napomena:** Ovaj projekt koristi pinout iz bundled BSP komponente (pogledaj
+`common_components/espressif__esp32_p4_function_ev_board/include/bsp/esp32_p4_function_ev_board.h`).
+`main/config.h.example` sadrži WiFi/HA/MQTT postavke; audio pinovi se ne čitaju iz tog fajla.
 
 **SDIO (P4 ↔ C6 Communication):**
 ```
@@ -111,6 +115,13 @@ Or manually:
 C:\Espressif\frameworks\esp-idf-v5.5\export.bat
 cd D:\AI\ESP32P4\esp32-p4-voice-assistant
 idf.py build
+```
+
+If you build from PowerShell and see `UnicodeEncodeError`, run:
+```powershell
+chcp 65001
+$env:PYTHONUTF8=1
+$env:PYTHONIOENCODING='utf-8'
 ```
 
 ### 2. Flash to Board
@@ -221,7 +232,7 @@ esp32-p4-voice-assistant/
   build/                            # Build output (generated)
   build.bat / flash.bat             # Windows build/flash scripts
   build.py / flash.py               # Cross-platform build/flash utilities
-  ota_server.bat / ota_server.py   # OTA HTTP server for firmware updates
+  ota_server.bat                    # OTA HTTP server for firmware updates
   partitions.csv                    # Custom partition table (WakeNet model)
   sdkconfig                         # ESP-IDF configuration
   README.md
@@ -285,7 +296,7 @@ esp32-p4-voice-assistant/
 ### Phase 8: OTA Updates ✅ COMPLETED
 - [x] HTTP-based OTA update handler
 - [x] MQTT trigger button and URL text input
-- [x] OTA server scripts (Python and Windows batch)
+- [x] OTA server scripts (Windows batch + `python -m http.server` option)
 - [x] White breathing LED during OTA
 - [x] Automatic reboot after successful update
 
@@ -402,24 +413,24 @@ Copy `main/config.h.example` to `main/config.h`, then edit your credentials (fil
    ```cmd
    ota_server.bat
    ```
-   Or cross-platform:
+   Or cross-platform (from repo root):
    ```bash
-   python ota_server.py
+   python -m http.server 8080
    ```
 3. In Home Assistant:
-   - Set `ota_url` text entity to: `http://YOUR_PC_IP:8080/esp32-p4-voice-assistant.bin`
+   - Set `ota_url` text entity to: `http://YOUR_PC_IP:8080/build/esp32_p4_voice_assistant.bin`
    - Press `ota_trigger` button
 4. Watch LED turn white (breathing) during update
 5. Device reboots automatically after successful update
 
 **Method 2: Custom HTTP Server**
 
-Host the binary file (`build/esp32-p4-voice-assistant.bin`) on any HTTP server and provide the URL to the device via MQTT.
+Host the binary file (`build/esp32_p4_voice_assistant.bin`) on any HTTP server and provide the URL to the device via MQTT.
 
 **OTA Server Features:**
 - Simple Python HTTP server on port 8080
 - Serves firmware from `build/` folder
-- Cross-platform (Windows batch and Python script)
+- Cross-platform (Windows batch or `python -m http.server`)
 - No external dependencies
 
 ### ESP-IDF menuconfig
@@ -516,9 +527,14 @@ Enable: Component config → ESP32P4-specific → Support for external PSRAM
 - Try different USB cable
 
 **VAD not detecting speech:**
-- Increase microphone gain in `bsp_board_extra.h` (default: 40.0 dB)
+- Increase microphone gain in `common_components/bsp_extra/include/bsp_board_extra.h` (default: 55.0)
 - Adjust VAD energy threshold in `vad.c` (default: 100)
 - Check audio levels in monitor log
+
+**Mic/WWD looks dead (`WWD audio stats ... peak=0 nz=0`):**
+- Ensure you're running a recent firmware where `bsp_extra_codec_set_fs()` opens playback first and record last (prevents ES8311 ADC path from being disabled).
+- Verify audio pinout matches the BSP header (`I2S_DIN` is `GPIO48` for this board profile).
+- Check for `Failed to open record codec` / `Failed to open playback codec` errors before the stats logs.
 
 ---
 

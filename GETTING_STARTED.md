@@ -117,15 +117,23 @@ Kopiraj `main/config.h.example` u `main/config.h` i uredi credentials:
 #### Opcija A: Koristi Batch Script (Najlakše)
 
 ```cmd
-D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\build.bat
+cd D:\AI\ESP32P4\esp32-p4-voice-assistant
+build.bat
 ```
 
 #### Opcija B: Ručno
 
 ```cmd
-cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
+cd D:\AI\ESP32P4\esp32-p4-voice-assistant
 C:\Espressif\frameworks\esp-idf-v5.5\export.bat
 idf.py build
+```
+
+**Ako `idf.py build` padne na `UnicodeEncodeError` (PowerShell encoding):**
+```powershell
+chcp 65001
+$env:PYTHONUTF8=1
+$env:PYTHONIOENCODING='utf-8'
 ```
 
 **Prvo build-anje će trajati 5-10 minuta** jer kompajlira ESP-IDF framework.
@@ -143,7 +151,8 @@ Project build complete. To flash, run:
 #### Opcija A: Koristi Flash Script
 
 ```cmd
-D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\flash.bat
+cd D:\AI\ESP32P4\esp32-p4-voice-assistant
+flash.bat
 ```
 
 #### Opcija B: Ručno
@@ -201,13 +210,10 @@ ERROR: Component 'bsp_extra' not found
 **Fix:**
 ```cmd
 # Provjeri postoje li folderi:
-dir D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\common_components
+dir D:\AI\ESP32P4\esp32-p4-voice-assistant\common_components
 ```
 
-Ako ne postoje, kopiraj iz original demo:
-```cmd
-xcopy /E /I "D:\platformio\P4\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components" "D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW\common_components"
-```
+Ako `common_components/` ne postoji, repo je nepotpun (re-clone / provjeri da si skinuo sve foldere).
 
 ---
 

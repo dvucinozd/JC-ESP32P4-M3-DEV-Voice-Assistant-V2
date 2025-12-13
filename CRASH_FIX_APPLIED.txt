@@ -41,7 +41,7 @@ Since the code was modified, you need to rebuild and flash:
 1. Open Windows Command Prompt
 
 2. Navigate to project:
-   cd D:\AI\ESP32P4\JC-ESP32P4-M3-DEV-Voice-Assistant_NEW
+   cd D:\AI\ESP32P4\esp32-p4-voice-assistant
 
 3. Rebuild:
    build.bat
