@@ -116,6 +116,22 @@ static void capture_task(void *arg) {
         if (wwd_callback) {
           wwd_callback(buffer, num_samples);
         }
+
+        // Light telemetry: log peak every ~1.5s to confirm audio activity in WWD mode.
+        if ((chunk_count % 30) == 0) {
+          int32_t peak = 0;
+          int non_zero = 0;
+          for (size_t i = 0; i < num_samples; i++) {
+            int32_t s = buffer[i];
+            if (s != 0) {
+              non_zero++;
+            }
+            if (s < 0) s = -s;
+            if (s > peak) peak = s;
+          }
+          ESP_LOGI(TAG, "WWD audio stats: chunk=%d samples=%d peak=%ld nz=%d",
+                   chunk_count, (int)num_samples, (long)peak, non_zero);
+        }
         // Skip VAD and streaming - just listen for wake word
         chunk_count++;
         continue;
