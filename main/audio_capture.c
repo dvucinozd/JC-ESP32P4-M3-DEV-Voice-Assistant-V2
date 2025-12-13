@@ -68,9 +68,12 @@ static void capture_task(void *arg) {
       size_t num_samples = bytes_read / sizeof(int16_t);
 
       // MODE 1: Wake Word Detection Mode (lightweight)
-      // NOTE: AGC is NOT applied in WWD mode to maintain consistent audio
-      // levels for reliable wake word detection
       if (capture_mode == CAPTURE_MODE_WAKE_WORD) {
+        // Optional: Apply AGC if enabled to improve wake word detection on low mic levels.
+        if (agc_enabled && agc_handle != NULL) {
+          agc_process(agc_handle, buffer, num_samples);
+        }
+
         // Feed raw audio to wake word detector callback
         if (wwd_callback) {
           wwd_callback(buffer, num_samples);
