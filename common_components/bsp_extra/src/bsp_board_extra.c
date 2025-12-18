@@ -40,6 +40,13 @@ static audio_player_cb_t audio_idle_callback = NULL;
 static void *audio_idle_cb_user_data = NULL;
 static char audio_file_path[128];
 
+// I2S Write Hook
+static i2s_write_callback_t i2s_write_cb = NULL;
+
+void bsp_extra_i2s_write_register_callback(i2s_write_callback_t cb) {
+    i2s_write_cb = cb;
+}
+
 static SemaphoreHandle_t get_audio_bus_mutex(void) {
     if (audio_bus_mutex == NULL) {
         audio_bus_mutex = xSemaphoreCreateMutex();
@@ -128,6 +135,11 @@ esp_err_t bsp_extra_i2s_write(void *audio_buffer, size_t len, size_t *bytes_writ
     // Ensure the playback codec path is opened; otherwise writes can block or fail.
     if (play_dev_handle == NULL || !play_dev_open) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    // Hook for AEC reference
+    if (i2s_write_cb) {
+        i2s_write_cb(audio_buffer, len);
     }
 
     i2s_chan_handle_t tx = bsp_audio_get_tx_chan();

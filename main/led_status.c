@@ -36,7 +36,7 @@ static const char *TAG = "led_status";
 static bool led_initialized = false;
 static bool led_enabled = true;
 static led_status_t current_status = LED_STATUS_OFF;
-static uint8_t brightness = 50; // 50% default
+static uint8_t brightness = 100; // 100% default
 static TaskHandle_t effect_task_handle = NULL;
 static volatile bool effect_running = false;
 
@@ -63,6 +63,11 @@ static void apply_rgb(uint8_t r, uint8_t g, uint8_t b) {
   uint32_t scaled_g = (g * brightness) / 100;
   uint32_t scaled_b = (b * brightness) / 100;
 
+  // Invert for Active Low (Common Anode) LEDs
+  scaled_r = 255 - scaled_r;
+  scaled_g = 255 - scaled_g;
+  scaled_b = 255 - scaled_b;
+
   ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RED, scaled_r);
   ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RED);
 
@@ -87,7 +92,6 @@ static void led_off(void) { apply_rgb(0, 0, 0); }
  */
 static void led_effect_task(void *arg) {
   uint32_t tick = 0;
-  uint8_t base_r = 0, base_g = 0, base_b = 0;
 
   while (effect_running) {
     led_status_t status = current_status;
@@ -95,13 +99,10 @@ static void led_effect_task(void *arg) {
     switch (status) {
     case LED_STATUS_LISTENING: {
       // Blue pulsing
-      base_r = 0;
-      base_g = 0;
-      base_b = 255;
       float phase = (float)(tick % PULSE_PERIOD_MS) / PULSE_PERIOD_MS;
       float intensity =
           0.3f + 0.7f * (0.5f + 0.5f * sinf(phase * 2 * 3.14159f));
-      apply_rgb(0, 0, (uint8_t)(base_b * intensity));
+      apply_rgb(0, 0, (uint8_t)(255 * intensity));
       break;
     }
 
@@ -228,7 +229,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_RED,
-      .duty = 0,
+      .duty = 255,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&red_conf));
@@ -240,7 +241,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_GREEN,
-      .duty = 0,
+      .duty = 255,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&green_conf));
@@ -252,7 +253,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_BLUE,
-      .duty = 0,
+      .duty = 255,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&blue_conf));

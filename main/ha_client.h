@@ -13,6 +13,13 @@
 extern "C" {
 #endif
 
+typedef struct {
+    const char *hostname;
+    int port;
+    const char *access_token;
+    bool use_ssl;
+} ha_client_config_t;
+
 /**
  * @brief Initialize Home Assistant client
  *
@@ -22,11 +29,17 @@ extern "C" {
  * - Authenticates using long-lived access token
  * - Subscribes to events
  *
+ * @param config Configuration struct
  * @return
  *    - ESP_OK: Successfully connected to Home Assistant
  *    - ESP_FAIL: Connection failed
  */
-esp_err_t ha_client_init(void);
+esp_err_t ha_client_init(const ha_client_config_t *config);
+
+// Wrapper for backward compatibility or simple use
+static inline esp_err_t ha_client_init_legacy(void) {
+    return ESP_ERR_NOT_SUPPORTED; 
+}
 
 /**
  * @brief Check if connected to Home Assistant

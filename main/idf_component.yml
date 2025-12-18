@@ -19,3 +19,4 @@ dependencies:
   espressif/esp_websocket_client: "~1.2.0"
   espressif/mdns: "^1.0.0"
   espressif/esp-sr: "^2.0.0"  # ESP Speech Recognition for wake word detection
+  espressif/led_strip: "^2.5.0"

@@ -109,6 +109,16 @@ esp_err_t bsp_extra_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode
 esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch);
 
 /**
+ * @brief I2S write callback (hook for AEC reference)
+ */
+typedef void (*i2s_write_callback_t)(const void *data, size_t len);
+
+/**
+ * @brief Register callback for I2S write (reference signal)
+ */
+void bsp_extra_i2s_write_register_callback(i2s_write_callback_t cb);
+
+/**
  * @brief Read data from recoder.
  *
  * @param audio_buffer: The pointer of receiving data buffer

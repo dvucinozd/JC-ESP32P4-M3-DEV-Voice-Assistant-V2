@@ -8,13 +8,17 @@
 #define AUDIO_CAPTURE_H
 
 #include "esp_err.h"
-#include "vad.h"
+//#include "vad.h" // Removed to avoid conflict with ESP-SR
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h> // Added
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// Forward declaration if needed, or just use void* for legacy config
+// typedef struct vad_config_t vad_config_t; 
 
 /**
  * VAD event types
@@ -59,11 +63,24 @@ typedef void (*audio_capture_wwd_callback_t)(const int16_t *audio_data,
 typedef void (*audio_capture_vad_callback_t)(audio_capture_vad_event_t event);
 
 /**
+ * @brief Callback for Offline Command detection (MultiNet)
+ * 
+ * @param command_id ID of the recognized command
+ * @param command_index Index of the command
+ */
+typedef void (*audio_capture_cmd_callback_t)(int command_id, int command_index);
+
+/**
  * @brief Initialize audio capture
  *
  * @return ESP_OK on success
  */
 esp_err_t audio_capture_init(void);
+
+/**
+ * @brief Register callback for offline commands
+ */
+void audio_capture_register_cmd_callback(audio_capture_cmd_callback_t callback);
 
 /**
  * @brief Start capturing audio
@@ -101,7 +118,7 @@ void audio_capture_deinit(void);
  * @param callback Function to call on VAD events (optional)
  * @return ESP_OK on success
  */
-esp_err_t audio_capture_enable_vad(const vad_config_t *config,
+esp_err_t audio_capture_enable_vad(const void *config,
                                    audio_capture_vad_callback_t callback);
 
 /**

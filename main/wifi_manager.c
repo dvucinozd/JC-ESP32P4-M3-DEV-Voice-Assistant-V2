@@ -52,7 +52,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-esp_err_t wifi_init_sta(void)
+esp_err_t wifi_init_sta(const char* ssid, const char* password)
 {
     s_wifi_event_group = xEventGroupCreate();
 
@@ -69,7 +69,9 @@ esp_err_t wifi_init_sta(void)
         return ret;
     }
 
-    esp_netif_create_default_wifi_sta();
+    if (esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == NULL) {
+        esp_netif_create_default_wifi_sta();
+    }
 
     ESP_LOGI(TAG, "Initializing WiFi via ESP32-C6 (SDIO)...");
 
@@ -91,22 +93,25 @@ esp_err_t wifi_init_sta(void)
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASSWORD,
-            /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (password len => 8).
-             * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
-             * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
-	     * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
-             */
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
             .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
         },
     };
+
+    if (ssid) {
+        strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+        wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
+    }
+    if (password) {
+        strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+        wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
+    }
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
     ESP_ERROR_CHECK(esp_wifi_start() );
 
-    ESP_LOGI(TAG, "WiFi init finished. Waiting for connection...");
+    ESP_LOGI(TAG, "WiFi init finished. Waiting for connection to '%s'...", ssid ? ssid : "NULL");
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
@@ -119,10 +124,10 @@ esp_err_t wifi_init_sta(void)
     /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
      * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "Connected to AP SSID:%s", WIFI_SSID);
+        ESP_LOGI(TAG, "Connected to AP SSID:%s", ssid ? ssid : "NULL");
         return ESP_OK;
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "Failed to connect to SSID:%s", WIFI_SSID);
+        ESP_LOGE(TAG, "Failed to connect to SSID:%s", ssid ? ssid : "NULL");
         return ESP_FAIL;
     } else {
         ESP_LOGE(TAG, "Unexpected WiFi event");

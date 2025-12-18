@@ -4,7 +4,6 @@
 
 #include "mqtt_ha.h"
 #include "cJSON.h"
-#include "connection_manager.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include <stdio.h>
@@ -139,7 +138,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(TAG, "MQTT connected to Home Assistant");
     mqtt_connected = true;
-    connection_manager_update_state(CONN_TYPE_MQTT, CONN_STATE_CONNECTED);
 
     // Subscribe to all command topics
     for (int i = 0; i < entity_count; i++) {
@@ -155,7 +153,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGW(TAG, "MQTT disconnected");
     mqtt_connected = false;
-    connection_manager_update_state(CONN_TYPE_MQTT, CONN_STATE_DISCONNECTED);
     break;
 
   case MQTT_EVENT_DATA:

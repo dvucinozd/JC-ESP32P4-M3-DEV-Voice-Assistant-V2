@@ -5,6 +5,7 @@
 
 #include "network_manager.h"
 #include "wifi_manager.h"
+#include "settings_manager.h" // Added for WiFi credentials
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -40,6 +41,18 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
                                     int32_t event_id, void *event_data);
 static void ip_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data);
+
+// Helper to start WiFi with stored credentials
+static esp_err_t start_wifi_fallback(void) {
+    app_settings_t settings;
+    if (settings_manager_load(&settings) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load WiFi settings for fallback, using empty credentials");
+        settings.wifi_ssid[0] = '\0';
+        settings.wifi_password[0] = '\0';
+    }
+    ESP_LOGI(TAG, "Starting WiFi fallback with SSID: %s", settings.wifi_ssid);
+    return wifi_manager_init(settings.wifi_ssid, settings.wifi_password);
+}
 
 /**
  * @brief Initialize Ethernet driver
@@ -141,7 +154,7 @@ static esp_err_t ethernet_init(void)
         return ret;
     }
 
-    ESP_LOGI(TAG, "✅ Ethernet initialized - waiting for link...");
+    ESP_LOGI(TAG, "Ethernet initialized - waiting for link...");
     ethernet_available = true;
 
     return ESP_OK;
@@ -155,7 +168,7 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
 {
     switch (event_id) {
     case ETHERNET_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "🔌 Ethernet cable connected");
+        ESP_LOGI(TAG, "Ethernet cable connected");
 
         // If WiFi fallback was active, stop it
         if (wifi_fallback_active && wifi_manager_is_active()) {
@@ -166,7 +179,7 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
         break;
 
     case ETHERNET_EVENT_DISCONNECTED:
-        ESP_LOGW(TAG, "🔌 Ethernet cable disconnected");
+        ESP_LOGW(TAG, "Ethernet cable disconnected");
 
         // Mark Ethernet as inactive
         if (active_network == NETWORK_TYPE_ETHERNET) {
@@ -180,9 +193,9 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
 
         // Activate WiFi fallback
         if (!wifi_fallback_active) {
-            ESP_LOGI(TAG, "⚠️  Activating WiFi fallback...");
+            ESP_LOGI(TAG, "Activating WiFi fallback...");
             wifi_fallback_active = true;
-            wifi_manager_init();
+            start_wifi_fallback();
         }
         break;
 
@@ -207,7 +220,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 {
     if (event_id == IP_EVENT_ETH_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "✅ Ethernet IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Ethernet IP: " IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "   Gateway: " IPSTR, IP2STR(&event->ip_info.gw));
         ESP_LOGI(TAG, "   Netmask: " IPSTR, IP2STR(&event->ip_info.netmask));
 
@@ -223,7 +236,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
         // WiFi got IP - only use if Ethernet is not active
         if (active_network != NETWORK_TYPE_ETHERNET) {
             ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-            ESP_LOGI(TAG, "✅ WiFi IP (fallback): " IPSTR, IP2STR(&event->ip_info.ip));
+            ESP_LOGI(TAG, "WiFi IP (fallback): " IPSTR, IP2STR(&event->ip_info.ip));
 
             active_network = NETWORK_TYPE_WIFI;
 
@@ -244,7 +257,7 @@ esp_err_t network_manager_init(void)
 {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "Network Manager Initialization");
-    ESP_LOGI(TAG, "Priority: Ethernet → WiFi fallback");
+    ESP_LOGI(TAG, "Priority: Ethernet -> WiFi fallback");
     ESP_LOGI(TAG, "========================================");
 
     // Initialize TCP/IP stack (required for both Ethernet and WiFi)
@@ -280,7 +293,7 @@ esp_err_t network_manager_init(void)
 
         // Check if we got IP via Ethernet
         if (active_network == NETWORK_TYPE_ETHERNET) {
-            ESP_LOGI(TAG, "✅ Ethernet active - skipping WiFi");
+            ESP_LOGI(TAG, "Ethernet active - skipping WiFi");
             return ESP_OK;
         } else {
             ESP_LOGW(TAG, "Ethernet initialized but no link detected");
@@ -293,7 +306,7 @@ esp_err_t network_manager_init(void)
     // Ethernet not available or no link - fall back to WiFi
     ESP_LOGI(TAG, "Starting WiFi fallback...");
     wifi_fallback_active = true;
-    ret = wifi_manager_init();
+    ret = start_wifi_fallback();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WiFi fallback initialization failed!");
         return ESP_FAIL;
@@ -374,7 +387,7 @@ esp_err_t network_manager_force_wifi_fallback(void)
 
     if (!wifi_fallback_active) {
         wifi_fallback_active = true;
-        return wifi_manager_init();
+        return start_wifi_fallback();
     }
 
     return ESP_OK;

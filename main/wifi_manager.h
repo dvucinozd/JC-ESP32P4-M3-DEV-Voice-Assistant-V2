@@ -20,12 +20,15 @@ extern "C" {
  * via SDIO interface (esp_wifi_remote). It will block until connection
  * is established or max retries reached.
  *
+ * @param ssid WiFi SSID
+ * @param password WiFi Password
+ * 
  * @return
  *    - ESP_OK: WiFi connected successfully
  *    - ESP_FAIL: Failed to connect after max retries
  *    - ESP_ERR_TIMEOUT: Unexpected event
  */
-esp_err_t wifi_init_sta(void);
+esp_err_t wifi_init_sta(const char* ssid, const char* password);
 
 /**
  * @brief Check if WiFi is currently connected
@@ -35,12 +38,10 @@ esp_err_t wifi_init_sta(void);
 bool wifi_is_connected(void);
 
 /**
- * @brief Alias for wifi_init_sta (for network manager)
- *
- * @return ESP_OK on success
+ * @brief Wrapper for wifi_init_sta (for backward compatibility if needed, but better to use direct call)
  */
-static inline esp_err_t wifi_manager_init(void) {
-    return wifi_init_sta();
+static inline esp_err_t wifi_manager_init(const char* ssid, const char* password) {
+    return wifi_init_sta(ssid, password);
 }
 
 /**
