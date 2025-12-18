@@ -7,6 +7,7 @@
 #include "audio_capture.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "bsp_board_extra.h"
 #include "esp_afe_sr_models.h"
@@ -42,6 +43,9 @@ static TaskHandle_t feed_task_handle = NULL;
 static TaskHandle_t fetch_task_handle = NULL;
 static volatile bool is_running = false;
 static audio_capture_mode_t current_mode = CAPTURE_MODE_IDLE;
+static EventGroupHandle_t capture_event_group = NULL;
+#define CAPTURE_FEED_DONE_BIT  BIT0
+#define CAPTURE_FETCH_DONE_BIT BIT1
 
 static audio_capture_callback_t audio_callback = NULL;
 static audio_capture_wwd_callback_t wwd_callback = NULL;
@@ -60,6 +64,17 @@ static void feed_task(void *arg) {
     size_t bytes_read;
 
     ESP_LOGI(TAG, "Feed Task Started (AEC Enabled)");
+
+    if (mic_buff == NULL || ref_buff == NULL || afe_buff == NULL) {
+        ESP_LOGE(TAG, "Feed task OOM (mic=%p, ref=%p, afe=%p)", mic_buff, ref_buff, afe_buff);
+        free(mic_buff);
+        free(ref_buff);
+        free(afe_buff);
+        if (capture_event_group) xEventGroupSetBits(capture_event_group, CAPTURE_FEED_DONE_BIT);
+        feed_task_handle = NULL;
+        sys_diag_wdt_remove();
+        vTaskDelete(NULL);
+    }
 
     while (is_running) {
         sys_diag_wdt_feed(); // Reset WDT
@@ -87,6 +102,8 @@ static void feed_task(void *arg) {
     free(mic_buff);
     free(ref_buff);
     free(afe_buff);
+    if (capture_event_group) xEventGroupSetBits(capture_event_group, CAPTURE_FEED_DONE_BIT);
+    feed_task_handle = NULL;
     sys_diag_wdt_remove();
     vTaskDelete(NULL);
 }
@@ -152,6 +169,8 @@ static void fetch_task(void *arg) {
              }
         }
     }
+    if (capture_event_group) xEventGroupSetBits(capture_event_group, CAPTURE_FETCH_DONE_BIT);
+    fetch_task_handle = NULL;
     sys_diag_wdt_remove();
     vTaskDelete(NULL);
 }
@@ -164,6 +183,14 @@ esp_err_t audio_capture_init(void) {
     if (afe_handle) return ESP_OK;
 
     ESP_LOGI(TAG, "Initializing ESP-SR AFE & MultiNet with AEC...");
+
+    if (capture_event_group == NULL) {
+        capture_event_group = xEventGroupCreate();
+        if (capture_event_group == NULL) {
+            ESP_LOGE(TAG, "Failed to create capture event group");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     
     // Init Reference Buffer (16KB ~ 0.5s)
     audio_ref_buffer_init(16 * 1024);
@@ -228,9 +255,23 @@ esp_err_t audio_capture_start(audio_capture_callback_t callback) {
     current_mode = CAPTURE_MODE_RECORDING;
     is_running = true;
 
+    if (capture_event_group) {
+        xEventGroupClearBits(capture_event_group, CAPTURE_FEED_DONE_BIT | CAPTURE_FETCH_DONE_BIT);
+    }
+
     // Increase stack for MultiNet processing
-    xTaskCreatePinnedToCore(feed_task, "afe_feed", 8192, NULL, CAPTURE_TASK_PRIORITY, &feed_task_handle, CAPTURE_TASK_CORE);
-    xTaskCreatePinnedToCore(fetch_task, "afe_fetch", 16384, NULL, AFE_TASK_PRIORITY, &fetch_task_handle, AFE_TASK_CORE);
+    if (xTaskCreatePinnedToCore(feed_task, "afe_feed", 8192, NULL, CAPTURE_TASK_PRIORITY, &feed_task_handle, CAPTURE_TASK_CORE) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create feed task");
+        is_running = false;
+        current_mode = CAPTURE_MODE_IDLE;
+        return ESP_FAIL;
+    }
+    if (xTaskCreatePinnedToCore(fetch_task, "afe_fetch", 16384, NULL, AFE_TASK_PRIORITY, &fetch_task_handle, AFE_TASK_CORE) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create fetch task");
+        is_running = false;
+        current_mode = CAPTURE_MODE_IDLE;
+        return ESP_FAIL;
+    }
 
     return ESP_OK;
 }
@@ -245,8 +286,22 @@ esp_err_t audio_capture_start_wake_word_mode(audio_capture_wwd_callback_t callba
     current_mode = CAPTURE_MODE_WAKE_WORD;
     is_running = true;
 
-    xTaskCreatePinnedToCore(feed_task, "afe_feed", 8192, NULL, CAPTURE_TASK_PRIORITY, &feed_task_handle, CAPTURE_TASK_CORE);
-    xTaskCreatePinnedToCore(fetch_task, "afe_fetch", 16384, NULL, AFE_TASK_PRIORITY, &fetch_task_handle, AFE_TASK_CORE);
+    if (capture_event_group) {
+        xEventGroupClearBits(capture_event_group, CAPTURE_FEED_DONE_BIT | CAPTURE_FETCH_DONE_BIT);
+    }
+
+    if (xTaskCreatePinnedToCore(feed_task, "afe_feed", 8192, NULL, CAPTURE_TASK_PRIORITY, &feed_task_handle, CAPTURE_TASK_CORE) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create feed task");
+        is_running = false;
+        current_mode = CAPTURE_MODE_IDLE;
+        return ESP_FAIL;
+    }
+    if (xTaskCreatePinnedToCore(fetch_task, "afe_fetch", 16384, NULL, AFE_TASK_PRIORITY, &fetch_task_handle, AFE_TASK_CORE) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create fetch task");
+        is_running = false;
+        current_mode = CAPTURE_MODE_IDLE;
+        return ESP_FAIL;
+    }
     
     return ESP_OK;
 }
@@ -255,16 +310,40 @@ void audio_capture_stop(void) {
     if (!is_running) return;
     
     is_running = false;
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
     current_mode = CAPTURE_MODE_IDLE;
     ESP_LOGI(TAG, "Capture Stopped");
 }
 
 esp_err_t audio_capture_stop_wait(uint32_t timeout_ms) {
+    if (!is_running) {
+        return ESP_OK;
+    }
+
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    if (self != NULL && (self == feed_task_handle || self == fetch_task_handle)) {
+        audio_capture_stop();
+        return ESP_OK;
+    }
+
     audio_capture_stop();
-    vTaskDelay(pdMS_TO_TICKS(timeout_ms > 100 ? 100 : timeout_ms));
-    return ESP_OK;
+
+    if (timeout_ms == 0 || capture_event_group == NULL) {
+        return ESP_OK;
+    }
+
+    EventBits_t bits = xEventGroupWaitBits(
+        capture_event_group,
+        CAPTURE_FEED_DONE_BIT | CAPTURE_FETCH_DONE_BIT,
+        pdFALSE,
+        pdTRUE,
+        pdMS_TO_TICKS(timeout_ms)
+    );
+
+    if ((bits & (CAPTURE_FEED_DONE_BIT | CAPTURE_FETCH_DONE_BIT)) ==
+        (CAPTURE_FEED_DONE_BIT | CAPTURE_FETCH_DONE_BIT)) {
+        return ESP_OK;
+    }
+    return ESP_ERR_TIMEOUT;
 }
 
 void audio_capture_deinit(void) {

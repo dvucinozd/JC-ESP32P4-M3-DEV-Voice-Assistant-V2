@@ -15,25 +15,49 @@ static const char *NVS_NAMESPACE = "diag";
 static bool safe_mode_active = false;
 static int boot_count = 0;
 static const char *reset_reason_str = "Unknown";
+static esp_reset_reason_t last_reset_reason = ESP_RST_UNKNOWN;
 
 // Timer handle to clear boot count after stable run
 static TimerHandle_t stable_timer = NULL;
+static TaskHandle_t diag_worker_task_handle = NULL;
+
+static void diag_worker_task(void *arg) {
+    (void)arg;
+
+    while (1) {
+        // Wait for a timer notification to do heavier work outside the timer service task.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        if (safe_mode_active) {
+            ESP_LOGW(TAG, "Safe mode stable period reached - clearing boot count and rebooting");
+        } else {
+            ESP_LOGI(TAG, "System running stable - resetting boot count");
+        }
+
+        nvs_handle_t handle;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+            nvs_set_i32(handle, "boot_count", 0);
+            nvs_commit(handle);
+            nvs_close(handle);
+        }
+        boot_count = 0;
+
+        if (safe_mode_active) {
+            esp_restart();
+        }
+    }
+}
 
 static void stable_timer_callback(TimerHandle_t xTimer) {
-    ESP_LOGI(TAG, "System running stable for 60s - resetting boot count");
-    
-    nvs_handle_t handle;
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_i32(handle, "boot_count", 0);
-        nvs_commit(handle);
-        nvs_close(handle);
+    (void)xTimer;
+    if (diag_worker_task_handle) {
+        xTaskNotifyGive(diag_worker_task_handle);
     }
-    boot_count = 0;
 }
 
 static void determine_reset_reason(void) {
-    esp_reset_reason_t reason = esp_reset_reason();
-    switch (reason) {
+    last_reset_reason = esp_reset_reason();
+    switch (last_reset_reason) {
         case ESP_RST_POWERON: reset_reason_str = "Power On"; break;
         case ESP_RST_EXT: reset_reason_str = "External Pin"; break;
         case ESP_RST_SW: reset_reason_str = "Software Reset"; break;
@@ -65,13 +89,26 @@ esp_err_t sys_diag_init(void) {
     nvs_get_i32(handle, "boot_count", &val);
     boot_count = (int)val;
     
-    // Increment
-    boot_count++;
+    // Only count crash-like resets; avoid false safe-mode from flashing/manual reset.
+    bool should_count = (last_reset_reason == ESP_RST_PANIC ||
+                         last_reset_reason == ESP_RST_INT_WDT ||
+                         last_reset_reason == ESP_RST_TASK_WDT ||
+                         last_reset_reason == ESP_RST_WDT ||
+                         last_reset_reason == ESP_RST_BROWNOUT);
+    if (should_count) {
+        boot_count++;
+    } else {
+        boot_count = 0;
+    }
     nvs_set_i32(handle, "boot_count", boot_count);
     nvs_commit(handle);
     nvs_close(handle);
 
     ESP_LOGI(TAG, "Boot Count: %d", boot_count);
+
+    if (diag_worker_task_handle == NULL) {
+        xTaskCreate(diag_worker_task, "diag_worker", 4096, NULL, 5, &diag_worker_task_handle);
+    }
 
     if (boot_count >= 3) {
         ESP_LOGE(TAG, "BOOT LOOP DETECTED! Entering Safe Mode.");
@@ -87,7 +124,7 @@ esp_err_t sys_diag_init(void) {
         return ESP_FAIL; // Indicate Safe Mode
     } else {
         // Normal boot - start timer to clear count if we survive
-        stable_timer = xTimerCreate("diag_stable", pdMS_TO_TICKS(30000), pdFALSE, NULL, stable_timer_callback);
+        stable_timer = xTimerCreate("diag_stable", pdMS_TO_TICKS(60000), pdFALSE, NULL, stable_timer_callback);
         xTimerStart(stable_timer, 0);
     }
 
@@ -107,10 +144,13 @@ void sys_diag_wdt_init(int timeout_sec) {
         .trigger_panic = true,
     };
     
-    esp_err_t err = esp_task_wdt_init(&config);
+    // Prefer reconfigure first to avoid noisy internal "already initialized" error logs.
+    esp_err_t err = esp_task_wdt_reconfigure(&config);
     if (err == ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(TAG, "TWDT already initialized, reconfiguring...");
-        esp_task_wdt_reconfigure(&config);
+        err = esp_task_wdt_init(&config);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "TWDT init/reconfigure failed: %s", esp_err_to_name(err));
     }
     
     esp_task_wdt_add(NULL); // Add current task (main)

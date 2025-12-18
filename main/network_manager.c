@@ -15,6 +15,8 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "network_manager";
@@ -42,6 +44,13 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
 static void ip_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data);
 
+typedef enum {
+    WIFI_FALLBACK_CMD_START = 0,
+    WIFI_FALLBACK_CMD_STOP = 1,
+} wifi_fallback_cmd_t;
+
+static TaskHandle_t wifi_fallback_task_handle = NULL;
+
 // Helper to start WiFi with stored credentials
 static esp_err_t start_wifi_fallback(void) {
     app_settings_t settings;
@@ -52,6 +61,27 @@ static esp_err_t start_wifi_fallback(void) {
     }
     ESP_LOGI(TAG, "Starting WiFi fallback with SSID: %s", settings.wifi_ssid);
     return wifi_manager_init(settings.wifi_ssid, settings.wifi_password);
+}
+
+static void wifi_fallback_task(void *arg) {
+    wifi_fallback_cmd_t cmd = (wifi_fallback_cmd_t)(uintptr_t)arg;
+
+    if (cmd == WIFI_FALLBACK_CMD_START) {
+        (void)start_wifi_fallback();
+    } else if (cmd == WIFI_FALLBACK_CMD_STOP) {
+        (void)wifi_manager_stop();
+    }
+
+    wifi_fallback_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+static void schedule_wifi_fallback_task(wifi_fallback_cmd_t cmd) {
+    if (wifi_fallback_task_handle != NULL) {
+        return;
+    }
+    xTaskCreate(wifi_fallback_task, "wifi_fallback", 4096, (void *)(uintptr_t)cmd, 4,
+                &wifi_fallback_task_handle);
 }
 
 /**
@@ -173,7 +203,7 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
         // If WiFi fallback was active, stop it
         if (wifi_fallback_active && wifi_manager_is_active()) {
             ESP_LOGI(TAG, "Stopping WiFi fallback - switching to Ethernet");
-            wifi_manager_stop();
+            schedule_wifi_fallback_task(WIFI_FALLBACK_CMD_STOP);
             wifi_fallback_active = false;
         }
         break;
@@ -195,7 +225,8 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
         if (!wifi_fallback_active) {
             ESP_LOGI(TAG, "Activating WiFi fallback...");
             wifi_fallback_active = true;
-            start_wifi_fallback();
+            // Do NOT block the system event loop with a synchronous WiFi connect attempt.
+            schedule_wifi_fallback_task(WIFI_FALLBACK_CMD_START);
         }
         break;
 
@@ -356,7 +387,7 @@ esp_err_t network_manager_get_ip(char *ip_str)
     esp_netif_ip_info_t ip_info;
     esp_err_t ret = esp_netif_get_ip_info(netif, &ip_info);
     if (ret == ESP_OK) {
-        sprintf(ip_str, IPSTR, IP2STR(&ip_info.ip));
+        snprintf(ip_str, 16, IPSTR, IP2STR(&ip_info.ip));
         return ESP_OK;
     }
 

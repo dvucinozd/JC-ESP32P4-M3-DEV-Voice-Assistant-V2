@@ -42,6 +42,7 @@ static ha_intent_callback_t intent_callback = NULL;
 static int stt_binary_handler_id = -1;
 static int last_run_message_id = -1;
 static bool timer_started_this_conversation = false;
+static bool speech_text_sent_this_run = false;
 
 static uint8_t *audio_frame_buf = NULL;
 static size_t audio_frame_buf_cap = 0;
@@ -59,6 +60,49 @@ static void download_tts_audio(const char *url);
 static bool ha_find_stt_handler_id(const cJSON *node, int depth, int *out_id);
 static void ha_clear_audio_ready(void);
 static void ha_set_audio_ready(int handler_id, const char *source);
+
+static void trim_ascii_whitespace_inplace(char *s) {
+  if (s == NULL) return;
+
+  char *start = s;
+  while (*start && isspace((unsigned char)*start)) start++;
+
+  size_t len = strlen(start);
+  while (len > 0 && isspace((unsigned char)start[len - 1])) {
+    start[--len] = '\0';
+  }
+
+  if (start != s) {
+    memmove(s, start, len + 1);
+  }
+}
+
+static const char *ha_extract_response_speech_plain_speech(const cJSON *data_obj) {
+  if (!data_obj) return NULL;
+
+  const cJSON *response = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "response");
+  if (!response) {
+    const cJSON *intent_output = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "intent_output");
+    if (intent_output) {
+      response = cJSON_GetObjectItemCaseSensitive((cJSON *)intent_output, "response");
+    }
+  }
+  if (!response) return NULL;
+
+  const cJSON *speech = cJSON_GetObjectItemCaseSensitive((cJSON *)response, "speech");
+  if (!speech) return NULL;
+
+  const cJSON *plain = cJSON_GetObjectItemCaseSensitive((cJSON *)speech, "plain");
+  if (!plain) return NULL;
+
+  const cJSON *speech_txt = cJSON_GetObjectItemCaseSensitive((cJSON *)plain, "speech");
+  if (speech_txt && cJSON_IsString(speech_txt) && speech_txt->valuestring &&
+      speech_txt->valuestring[0] != '\0') {
+    return speech_txt->valuestring;
+  }
+
+  return NULL;
+}
 
 // ... Helper functions (ha_parse_int_item, etc.) ...
 static bool ha_parse_int_item(const cJSON *item, int *out_id) {
@@ -160,9 +204,16 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
             if (evt_type && evt_type->valuestring) {
                 if (strcmp(evt_type->valuestring, "run-start") == 0) {
                     timer_started_this_conversation = false;
+                    speech_text_sent_this_run = false;
                     int hid = -1;
                     if (data_obj && ha_find_stt_handler_id(data_obj, 6, &hid)) {
                         ha_set_audio_ready(hid, "run-start");
+                    }
+                } else if (strcmp(evt_type->valuestring, "intent-end") == 0) {
+                    const char *speech = ha_extract_response_speech_plain_speech(data_obj);
+                    if (speech && conversation_callback) {
+                        conversation_callback(speech, NULL);
+                        speech_text_sent_this_run = true;
                     }
                 } else if (strcmp(evt_type->valuestring, "tts-end") == 0) {
                     if (timer_started_this_conversation) {
@@ -171,7 +222,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
                         cJSON *tts_out = cJSON_GetObjectItem(data_obj, "tts_output");
                         if (tts_out) {
                             cJSON *text = cJSON_GetObjectItem(tts_out, "text");
-                            if (text && text->valuestring && conversation_callback) {
+                            if (!speech_text_sent_this_run && text && text->valuestring && conversation_callback) {
                                 conversation_callback(text->valuestring, NULL);
                             }
                             cJSON *url = cJSON_GetObjectItem(tts_out, "url");
@@ -265,6 +316,8 @@ esp_err_t ha_client_init(const ha_client_config_t *config) {
   config_hostname[sizeof(config_hostname)-1] = '\0';
   strncpy(config_token, config->access_token, sizeof(config_token)-1);
   config_token[sizeof(config_token)-1] = '\0';
+  trim_ascii_whitespace_inplace(config_hostname);
+  trim_ascii_whitespace_inplace(config_token);
   client_config.hostname = config_hostname;
   client_config.access_token = config_token;
   client_config.port = config->port;
@@ -312,6 +365,10 @@ esp_err_t ha_client_init(const ha_client_config_t *config) {
 bool ha_client_is_connected(void) { return ws_connected && ws_authenticated; }
 bool ha_client_is_audio_ready(void) { return ha_client_is_connected() && stt_binary_handler_id >= 0; }
 int ha_client_get_stt_binary_handler_id(void) { return stt_binary_handler_id; }
+
+esp_err_t ha_client_send_text(const char *text) {
+    return ha_client_request_tts(text);
+}
 
 esp_err_t ha_client_request_tts(const char *text) {
     if (!ha_client_is_connected()) return ESP_FAIL;

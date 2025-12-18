@@ -7,6 +7,7 @@
 
 #define TAG "settings"
 #define NVS_NAMESPACE "sys_config"
+#define DEFAULT_OUTPUT_VOLUME 60
 
 esp_err_t settings_manager_init(void) {
     // NVS init is usually done in main, but we can double check here
@@ -43,15 +44,32 @@ esp_err_t settings_manager_load(app_settings_t *settings) {
         settings_manager_reset_defaults();
         // Recurse once? No, just load defaults manually to struct
         strncpy(settings->wifi_ssid, WIFI_SSID, sizeof(settings->wifi_ssid)-1);
+        settings->wifi_ssid[sizeof(settings->wifi_ssid)-1] = '\0';
         strncpy(settings->wifi_password, WIFI_PASSWORD, sizeof(settings->wifi_password)-1);
+        settings->wifi_password[sizeof(settings->wifi_password)-1] = '\0';
         strncpy(settings->ha_hostname, HA_HOSTNAME, sizeof(settings->ha_hostname)-1);
+        settings->ha_hostname[sizeof(settings->ha_hostname)-1] = '\0';
         settings->ha_port = HA_PORT;
         strncpy(settings->ha_token, HA_TOKEN, sizeof(settings->ha_token)-1);
+        settings->ha_token[sizeof(settings->ha_token)-1] = '\0';
         settings->ha_use_ssl = HA_USE_SSL;
         strncpy(settings->mqtt_broker_uri, MQTT_BROKER_URI, sizeof(settings->mqtt_broker_uri)-1);
-        if (MQTT_USERNAME) strncpy(settings->mqtt_username, MQTT_USERNAME, sizeof(settings->mqtt_username)-1);
-        if (MQTT_PASSWORD) strncpy(settings->mqtt_password, MQTT_PASSWORD, sizeof(settings->mqtt_password)-1);
+        settings->mqtt_broker_uri[sizeof(settings->mqtt_broker_uri)-1] = '\0';
+        if (MQTT_USERNAME) {
+            strncpy(settings->mqtt_username, MQTT_USERNAME, sizeof(settings->mqtt_username)-1);
+            settings->mqtt_username[sizeof(settings->mqtt_username)-1] = '\0';
+        } else {
+            settings->mqtt_username[0] = '\0';
+        }
+        if (MQTT_PASSWORD) {
+            strncpy(settings->mqtt_password, MQTT_PASSWORD, sizeof(settings->mqtt_password)-1);
+            settings->mqtt_password[sizeof(settings->mqtt_password)-1] = '\0';
+        } else {
+            settings->mqtt_password[0] = '\0';
+        }
         strncpy(settings->mqtt_client_id, MQTT_CLIENT_ID, sizeof(settings->mqtt_client_id)-1);
+        settings->mqtt_client_id[sizeof(settings->mqtt_client_id)-1] = '\0';
+        settings->output_volume = DEFAULT_OUTPUT_VOLUME;
         return ESP_OK;
     }
 
@@ -74,6 +92,12 @@ esp_err_t settings_manager_load(app_settings_t *settings) {
     nvs_get_str_safe(my_handle, "mqtt_user", settings->mqtt_username, sizeof(settings->mqtt_username), MQTT_USERNAME);
     nvs_get_str_safe(my_handle, "mqtt_pass", settings->mqtt_password, sizeof(settings->mqtt_password), MQTT_PASSWORD);
     nvs_get_str_safe(my_handle, "mqtt_id", settings->mqtt_client_id, sizeof(settings->mqtt_client_id), MQTT_CLIENT_ID);
+
+    int32_t out_vol = DEFAULT_OUTPUT_VOLUME;
+    (void)nvs_get_i32(my_handle, "out_vol", &out_vol);
+    if (out_vol < 0) out_vol = 0;
+    if (out_vol > 100) out_vol = 100;
+    settings->output_volume = (int)out_vol;
 
     nvs_close(my_handle);
     return ESP_OK;
@@ -98,6 +122,11 @@ esp_err_t settings_manager_save(const app_settings_t *settings) {
     nvs_set_str(my_handle, "mqtt_user", settings->mqtt_username);
     nvs_set_str(my_handle, "mqtt_pass", settings->mqtt_password);
     nvs_set_str(my_handle, "mqtt_id", settings->mqtt_client_id);
+
+    int32_t out_vol = settings->output_volume;
+    if (out_vol < 0) out_vol = 0;
+    if (out_vol > 100) out_vol = 100;
+    nvs_set_i32(my_handle, "out_vol", out_vol);
 
     err = nvs_commit(my_handle);
     nvs_close(my_handle);

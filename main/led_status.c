@@ -7,6 +7,7 @@
 
 #include "led_status.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -45,6 +46,8 @@ static uint8_t current_r = 0;
 static uint8_t current_g = 0;
 static uint8_t current_b = 0;
 
+static TaskHandle_t test_task_handle = NULL;
+
 /**
  * @brief Apply RGB values to LEDs with brightness scaling
  */
@@ -63,10 +66,12 @@ static void apply_rgb(uint8_t r, uint8_t g, uint8_t b) {
   uint32_t scaled_g = (g * brightness) / 100;
   uint32_t scaled_b = (b * brightness) / 100;
 
-  // Invert for Active Low (Common Anode) LEDs
+#if LED_ACTIVE_LOW
+  // Invert for Active Low (common-anode / sinking driver) LEDs
   scaled_r = 255 - scaled_r;
   scaled_g = 255 - scaled_g;
   scaled_b = 255 - scaled_b;
+#endif
 
   ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RED, scaled_r);
   ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RED);
@@ -211,6 +216,11 @@ esp_err_t led_status_init(void) {
 
   ESP_LOGI(TAG, "Initializing LED status (R=%d, G=%d, B=%d)", LED_GPIO_RED,
            LED_GPIO_GREEN, LED_GPIO_BLUE);
+  ESP_LOGI(TAG, "LED_ACTIVE_LOW=%d", LED_ACTIVE_LOW);
+
+  (void)gpio_set_drive_capability(LED_GPIO_RED, GPIO_DRIVE_CAP_3);
+  (void)gpio_set_drive_capability(LED_GPIO_GREEN, GPIO_DRIVE_CAP_3);
+  (void)gpio_set_drive_capability(LED_GPIO_BLUE, GPIO_DRIVE_CAP_3);
 
   // Configure LEDC timer
   ledc_timer_config_t timer_conf = {
@@ -229,7 +239,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_RED,
-      .duty = 255,
+      .duty = 0,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&red_conf));
@@ -241,7 +251,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_GREEN,
-      .duty = 255,
+      .duty = 0,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&green_conf));
@@ -253,7 +263,7 @@ esp_err_t led_status_init(void) {
       .timer_sel = LEDC_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = LED_GPIO_BLUE,
-      .duty = 255,
+      .duty = 0,
       .hpoint = 0,
   };
   ESP_ERROR_CHECK(ledc_channel_config(&blue_conf));
@@ -357,6 +367,36 @@ void led_status_set_rgb(uint8_t r, uint8_t g, uint8_t b) {
   stop_effect_task();
   current_status = LED_STATUS_OFF; // Custom color mode
   apply_rgb(r, g, b);
+}
+
+static void led_test_task(void *arg) {
+  led_status_t saved_status = led_status_get();
+
+  led_status_set_rgb(255, 0, 0);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  led_status_set_rgb(0, 255, 0);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  led_status_set_rgb(0, 0, 255);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  led_status_set_rgb(255, 255, 255);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  led_off();
+
+  // Restore prior status
+  led_status_set(saved_status);
+
+  test_task_handle = NULL;
+  vTaskDelete(NULL);
+}
+
+void led_status_test_pattern(void) {
+  if (!led_initialized) {
+    return;
+  }
+  if (test_task_handle != NULL) {
+    return;
+  }
+  xTaskCreate(led_test_task, "led_test", 2048, NULL, 2, &test_task_handle);
 }
 
 void led_status_deinit(void) {

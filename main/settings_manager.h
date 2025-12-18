@@ -20,6 +20,8 @@ typedef struct {
     char mqtt_username[32];
     char mqtt_password[64];
     char mqtt_client_id[32];
+
+    int output_volume; // 0-100
 } app_settings_t;
 
 // Initialize settings manager (mounts NVS)

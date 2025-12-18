@@ -7,9 +7,13 @@
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "mqtt_ha";
+
+static void build_discovery_topic(const char *component, const char *entity_id,
+                                  char *topic, size_t topic_len);
 
 // Device information
 #define DEVICE_NAME "ESP32-P4 Voice Assistant"
@@ -26,8 +30,10 @@ static const char *TAG = "mqtt_ha";
 
 typedef struct {
   char entity_id[32];
+  char component[16];
   mqtt_ha_entity_type_t type;
   mqtt_ha_command_callback_t callback;
+  char *discovery_payload; // retained discovery JSON (no secrets)
 } mqtt_entity_t;
 
 // Global state
@@ -35,6 +41,30 @@ static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_connected = false;
 static mqtt_entity_t entities[MAX_ENTITIES];
 static int entity_count = 0;
+
+static int find_entity_index(const char *entity_id) {
+  for (int i = 0; i < entity_count; i++) {
+    if (strcmp(entities[i].entity_id, entity_id) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static esp_err_t publish_discovery_payload(const mqtt_entity_t *ent) {
+  if (!mqtt_connected || !mqtt_client || !ent || !ent->discovery_payload ||
+      !ent->component[0]) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  char topic[128];
+  build_discovery_topic(ent->component, ent->entity_id, topic, sizeof(topic));
+
+  int msg_id =
+      esp_mqtt_client_publish(mqtt_client, topic, ent->discovery_payload, 0, 1,
+                             1 /* retain */);
+  return (msg_id >= 0) ? ESP_OK : ESP_FAIL;
+}
 
 /**
  * Build Home Assistant MQTT Discovery topic
@@ -90,14 +120,12 @@ static cJSON *build_device_json(void) {
  */
 static esp_err_t publish_discovery(const char *component, const char *entity_id,
                                    cJSON *config) {
-  if (!mqtt_connected) {
-    ESP_LOGW(TAG, "MQTT not connected, cannot publish discovery");
-    return ESP_ERR_INVALID_STATE;
+  if (!component || !entity_id || !config) {
+    if (config) {
+      cJSON_Delete(config);
+    }
+    return ESP_ERR_INVALID_ARG;
   }
-
-  // Build discovery topic
-  char topic[128];
-  build_discovery_topic(component, entity_id, topic, sizeof(topic));
 
   // Add device information
   cJSON_AddItemToObject(config, "device", build_device_json());
@@ -110,21 +138,32 @@ static esp_err_t publish_discovery(const char *component, const char *entity_id,
     return ESP_FAIL;
   }
 
-  ESP_LOGI(TAG, "Publishing discovery: %s", topic);
-  ESP_LOGD(TAG, "Discovery payload: %s", json_str);
-
-  // Publish with retain=true so HA sees it on restart
-  int msg_id = esp_mqtt_client_publish(mqtt_client, topic, json_str, 0, 1, 1);
-
-  free(json_str);
   cJSON_Delete(config);
 
-  if (msg_id < 0) {
-    ESP_LOGE(TAG, "Failed to publish discovery message");
+  int idx = find_entity_index(entity_id);
+  if (idx < 0) {
+    ESP_LOGW(TAG, "Discovery prepared for unknown entity: %s", entity_id);
+    free(json_str);
     return ESP_FAIL;
   }
 
-  return ESP_OK;
+  strncpy(entities[idx].component, component, sizeof(entities[idx].component) - 1);
+  entities[idx].component[sizeof(entities[idx].component) - 1] = '\0';
+
+  if (entities[idx].discovery_payload) {
+    free(entities[idx].discovery_payload);
+  }
+  entities[idx].discovery_payload = json_str;
+
+  if (!mqtt_connected) {
+    ESP_LOGI(TAG, "MQTT not connected yet; queued discovery for %s/%s", component,
+             entity_id);
+    return ESP_OK;
+  }
+
+  ESP_LOGI(TAG, "Publishing discovery: %s/%s", component, entity_id);
+  ESP_LOGD(TAG, "Discovery payload: %s", entities[idx].discovery_payload);
+  return publish_discovery_payload(&entities[idx]);
 }
 
 /**
@@ -138,6 +177,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(TAG, "MQTT connected to Home Assistant");
     mqtt_connected = true;
+
+    // Republish discovery for all entities (handles boot-time race where
+    // entities were registered before MQTT connected).
+    for (int i = 0; i < entity_count; i++) {
+      if (entities[i].discovery_payload && entities[i].component[0]) {
+        (void)publish_discovery_payload(&entities[i]);
+      }
+    }
 
     // Subscribe to all command topics
     for (int i = 0; i < entity_count; i++) {
@@ -519,6 +566,7 @@ esp_err_t mqtt_ha_register_text(const char *entity_id, const char *name,
   // Build discovery config for text entity
   cJSON *config = cJSON_CreateObject();
   cJSON_AddStringToObject(config, "name", name);
+  cJSON_AddStringToObject(config, "object_id", entity_id);
 
   char unique_id[64];
   snprintf(unique_id, sizeof(unique_id), "%s_%s", DEVICE_ID, entity_id);

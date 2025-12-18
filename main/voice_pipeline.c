@@ -137,7 +137,7 @@ void voice_pipeline_trigger_wake(void) {
 
 void voice_pipeline_on_music_state_change(bool is_playing) {
     if (is_playing) {
-        // pipeline_post_cmd(PIPELINE_CMD_STOP_WWD, 0); 
+        pipeline_post_cmd(PIPELINE_CMD_STOP_WWD, 0);
     } else {
         pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
     }

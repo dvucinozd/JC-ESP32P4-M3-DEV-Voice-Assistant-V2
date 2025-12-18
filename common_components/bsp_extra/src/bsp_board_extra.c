@@ -199,6 +199,15 @@ esp_err_t bsp_extra_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode
             ESP_LOGE(TAG, "Failed to open record codec (ret=%s)", esp_err_to_name(open_ret));
         }
     }
+
+    // Restore output volume after codec reopen/reconfig.
+    if (play_dev_handle && play_dev_open) {
+        esp_err_t vret = esp_codec_dev_set_out_vol(play_dev_handle, _vloume_intensity);
+        if (vret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to restore codec volume (%d): %s", _vloume_intensity, esp_err_to_name(vret));
+            ret |= vret;
+        }
+    }
     audio_bus_unlock();
     return ret;
 }
@@ -224,6 +233,15 @@ esp_err_t bsp_extra_codec_open_playback(uint32_t rate, uint32_t bits_cfg, i2s_sl
         ret = esp_codec_dev_open(play_dev_handle, &fs);
         play_dev_open = (ret == ESP_OK);
         ESP_LOGI(TAG, "Setting codec to %d Hz, %d bits, %d channels", rate, bits_cfg, ch);
+
+        // Restore output volume after open.
+        if (play_dev_open) {
+            esp_err_t vret = esp_codec_dev_set_out_vol(play_dev_handle, _vloume_intensity);
+            if (vret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to restore codec volume (%d): %s", _vloume_intensity, esp_err_to_name(vret));
+                ret |= vret;
+            }
+        }
     }
     audio_bus_unlock();
 

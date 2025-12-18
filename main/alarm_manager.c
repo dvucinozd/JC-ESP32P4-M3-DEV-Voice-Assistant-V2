@@ -111,6 +111,7 @@ esp_err_t alarm_manager_set(uint8_t hour, uint8_t minute, bool recurring, const 
     alarms[slot].active = true;
     alarms[slot].recurring = recurring;
     strncpy(alarms[slot].label, label ? label : "Alarm", ALARM_LABEL_LEN - 1);
+    alarms[slot].label[ALARM_LABEL_LEN - 1] = '\0';
     
     if (out_id) *out_id = alarms[slot].id;
 

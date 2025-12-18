@@ -25,6 +25,14 @@ extern "C" {
 #define LED_GPIO_BLUE 47
 
 /**
+ * @brief Set to 1 for active-low LED modules (common-anode / sinking driver).
+ * For common-cathode (common to GND), keep 0.
+ */
+#ifndef LED_ACTIVE_LOW
+#define LED_ACTIVE_LOW 0
+#endif
+
+/**
  * @brief LED Status States
  */
 typedef enum {
@@ -100,6 +108,13 @@ bool led_status_is_enabled(void);
  * @param b Blue component
  */
 void led_status_set_rgb(uint8_t r, uint8_t g, uint8_t b);
+
+/**
+ * @brief Run a short RGB test pattern
+ *
+ * Useful for diagnosing wiring/pin issues. Runs asynchronously.
+ */
+void led_status_test_pattern(void);
 
 /**
  * @brief Deinitialize LED status module
