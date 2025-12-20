@@ -34,6 +34,7 @@
 #include "audio_capture.h"
 #include "alarm_manager.h" 
 #include "sys_diag.h" // Phase 9
+#include "oled_status.h"
 
 #define TAG "main"
 
@@ -43,6 +44,7 @@ static char ota_url_value[256] = {0};
 static TaskHandle_t music_control_task_handle = NULL;
 static bool audio_hw_ready = false;
 static TaskHandle_t metrics_task_handle = NULL;
+static TaskHandle_t led_ready_task_handle = NULL;
 
 static const char *ota_state_to_string(ota_state_t state);
 static const char *music_state_to_string(music_state_t state);
@@ -51,6 +53,7 @@ static void mqtt_publish_telemetry(void);
 static void mqtt_metrics_task(void *arg);
 static bool get_wifi_rssi(int *out_rssi);
 static void ota_progress_handler(ota_state_t state, int progress, const char *message);
+static void led_ready_task(void *arg);
 
 typedef enum {
     MUSIC_CMD_PLAY = 0,
@@ -250,6 +253,7 @@ static void post_connect_task(void *arg) {
     if (mqtt_ha_is_connected()) {
         mqtt_ha_update_sensor("ip_address", ip_str);
     }
+    oled_status_set_last_event("ip-got");
 
     // Start web dashboard once network is up.
     webserial_init();
@@ -434,6 +438,7 @@ static void mqtt_ota_url_callback(const char *entity_id, const char *payload) {
     (void)mqtt_ha_update_text("ota_url_input", ota_url_value);
     mqtt_ha_update_sensor("ota_update_url",
                           (ota_url_value[0] != '\0') ? ota_url_value : "NOT_SET");
+    oled_status_set_ota_url_present(ota_url_value[0] != '\0');
 
     // Save to settings
     app_settings_t s;
@@ -591,8 +596,10 @@ static void mqtt_setup_task(void *arg) {
     if (ota_url_value[0] != '\0') {
         mqtt_ha_update_text("ota_url_input", ota_url_value);
         mqtt_ha_update_sensor("ota_update_url", ota_url_value);
+        oled_status_set_ota_url_present(true);
     } else {
         mqtt_ha_update_sensor("ota_update_url", "NOT_SET");
+        oled_status_set_ota_url_present(false);
     }
 
     mqtt_publish_telemetry();
@@ -612,6 +619,17 @@ static void network_event_callback(network_type_t type, bool connected) {
             xTaskCreate(post_connect_task, "net_post", 4096, (void *)(uintptr_t)type, 5,
                         &post_connect_task_handle);
         }
+        if (type == NETWORK_TYPE_ETHERNET) {
+            oled_status_set_last_event("eth-up");
+        } else if (type == NETWORK_TYPE_WIFI) {
+            oled_status_set_last_event("wifi-up");
+        }
+    } else {
+        if (type == NETWORK_TYPE_ETHERNET) {
+            oled_status_set_last_event("eth-down");
+        } else if (type == NETWORK_TYPE_WIFI) {
+            oled_status_set_last_event("wifi-down");
+        }
     }
 }
 
@@ -619,6 +637,44 @@ static void music_state_callback(music_state_t state, int current_track, int tot
     bool is_playing = (state == MUSIC_STATE_PLAYING || state == MUSIC_STATE_PAUSED);
     voice_pipeline_on_music_state_change(is_playing);
     mqtt_update_music_state(state, current_track, total_tracks);
+
+    oled_music_state_t oled_state = OLED_MUSIC_OFF;
+    if (state == MUSIC_STATE_PLAYING) {
+        oled_state = OLED_MUSIC_PLAYING;
+    } else if (state == MUSIC_STATE_PAUSED) {
+        oled_state = OLED_MUSIC_PAUSED;
+    }
+    oled_status_set_music_state(oled_state, current_track, total_tracks);
+}
+
+static void led_ready_task(void *arg) {
+    (void)arg;
+    bool last_ha_ok = ha_client_is_connected();
+    int64_t last_change = esp_timer_get_time();
+
+    while (1) {
+        bool ha_ok = ha_client_is_connected();
+        int64_t now = esp_timer_get_time();
+
+        if (ha_ok != last_ha_ok) {
+            last_change = now;
+            last_ha_ok = ha_ok;
+        }
+
+        if (voice_pipeline_is_running()) {
+            led_status_t current = led_status_get();
+            int64_t elapsed = now - last_change;
+
+            if (!ha_ok && current == LED_STATUS_IDLE && elapsed >= 3000LL * 1000LL) {
+                led_status_set(LED_STATUS_CONNECTING);
+            } else if (ha_ok && current == LED_STATUS_CONNECTING &&
+                       elapsed >= 1000LL * 1000LL) {
+                led_status_set(LED_STATUS_IDLE);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
 }
 
 void app_main(void) {
@@ -651,6 +707,10 @@ void app_main(void) {
         led_status_set(LED_STATUS_BOOTING);
     }
 
+    oled_status_init();
+    oled_status_set_safe_mode(safe_mode);
+    oled_status_set_last_event(safe_mode ? "safe-on" : "boot");
+
     // OTA module (available in both normal and safe mode)
     ota_update_init();
     ota_update_register_callback(ota_progress_handler);
@@ -675,6 +735,7 @@ void app_main(void) {
         ota_url_value[sizeof(ota_url_value)-1] = '\0';
         ESP_LOGI(TAG, "Loaded OTA URL from settings: %s", ota_url_value);
     }
+    oled_status_set_ota_url_present(ota_url_value[0] != '\0');
 
     // 6. Network Init
     network_manager_register_callback(network_event_callback);
@@ -708,6 +769,9 @@ void app_main(void) {
         ESP_LOGI(TAG, "System Ready. Waiting for Wake Word...");
         led_status_set(LED_STATUS_IDLE);
         voice_pipeline_start();
+        if (led_ready_task_handle == NULL) {
+            xTaskCreate(led_ready_task, "led_ready", 2048, NULL, 2, &led_ready_task_handle);
+        }
     } else {
         // Safe Mode Loop
         ESP_LOGW(TAG, "Safe Mode: Use Web/OTA to fix issues.");

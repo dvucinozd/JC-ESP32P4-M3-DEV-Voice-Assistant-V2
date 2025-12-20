@@ -22,6 +22,7 @@
 #include "cJSON.h"
 #include "sys_diag.h"
 #include "bsp_board_extra.h"
+#include "oled_status.h"
 
 #define TAG "voice_pipeline"
 #define FOLLOWUP_RECORDING_MS 7000
@@ -67,6 +68,7 @@ static bool timer_started_from_stt = false;
 
 static char *current_pipeline_handler = NULL;
 static int warmup_chunks_skip = 0;
+static bool tts_stream_active = false;
 
 // Config
 static voice_pipeline_config_t current_config = {
@@ -223,6 +225,7 @@ static void pipeline_task(void *arg) {
             
             switch (cmd.type) {
                 case PIPELINE_CMD_WAKE_DETECTED:
+                    oled_status_set_last_event("wake");
                     if (!ha_client_is_connected()) {
                         ESP_LOGW(TAG, "Wake word detected but HA disconnected");
                         pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
@@ -290,6 +293,7 @@ static void pipeline_task(void *arg) {
                     if (audio_capture_start_wake_word_mode(on_wake_word_detected) == ESP_OK) {
                         is_wwd_running = true;
                         led_status_set(LED_STATUS_IDLE);
+                        oled_status_set_va_state(OLED_VA_IDLE);
                         if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SPREMAN");
                         ESP_LOGI(TAG, "WWD Resumed");
                     }
@@ -308,6 +312,7 @@ static void pipeline_task(void *arg) {
                 case PIPELINE_CMD_START_FOLLOWUP_VAD:
                     audio_capture_stop_wait(500);
                     led_status_set(LED_STATUS_LISTENING);
+                    oled_status_set_va_state(OLED_VA_LISTENING);
                     if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SLUSAM...");
                     
                     if (start_audio_streaming(FOLLOWUP_RECORDING_MS, "follow-up") != ESP_OK) {
@@ -344,6 +349,8 @@ static void pipeline_task(void *arg) {
 
                 case PIPELINE_CMD_ERROR_BEEP:
                     beep_tone_play(400, 300, 60);
+                    oled_status_set_va_state(OLED_VA_ERROR);
+                    oled_status_set_last_event("err");
                     break;
 
                 default: break;
@@ -369,6 +376,8 @@ static void on_wake_word_detected(const int16_t *audio_data, size_t samples) {
     pending_timer_valid = false;
     timer_started_from_stt = false;
     led_status_set(LED_STATUS_LISTENING);
+    oled_status_set_va_state(OLED_VA_LISTENING);
+    oled_status_set_last_event("wake");
     if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SLUŠAM...");
     pipeline_post_cmd(PIPELINE_CMD_WAKE_DETECTED, 0);
 }
@@ -380,6 +389,8 @@ static void on_offline_cmd_detected(int id, int index) {
 static void vad_event_handler(audio_capture_vad_event_t event) {
     if (event == VAD_EVENT_SPEECH_START) {
         ESP_LOGI(TAG, "VAD: Speech Start");
+        oled_status_set_va_state(OLED_VA_LISTENING);
+        oled_status_set_last_event("vad-start");
     } else if (event == VAD_EVENT_SPEECH_END) {
         ESP_LOGI(TAG, "VAD: Speech End");
         is_pipeline_active = false;
@@ -388,6 +399,8 @@ static void vad_event_handler(audio_capture_vad_event_t event) {
         if (ha_client_is_connected()) {
             ha_client_end_audio_stream();
             led_status_set(LED_STATUS_PROCESSING);
+            oled_status_set_va_state(OLED_VA_PROCESSING);
+            oled_status_set_last_event("vad-end");
             if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "OBRAĐUJEM...");
         } else {
             ESP_LOGW(TAG, "HA not connected at speech end");
@@ -423,6 +436,7 @@ static void stt_text_handler(const char *text, const char *conversation_id) {
 
     strncpy(last_stt_text, text, sizeof(last_stt_text) - 1);
     last_stt_text[sizeof(last_stt_text) - 1] = '\0';
+    oled_status_set_last_event("stt");
 
     pending_timer_valid = parse_timer_seconds_from_text(last_stt_text, &pending_timer_seconds);
     if (pending_timer_valid) {
@@ -446,14 +460,19 @@ static esp_err_t start_audio_streaming(uint32_t max_recording_ms, const char *co
     
     if (ha_client_is_connected()) {
         current_pipeline_handler = ha_client_start_conversation();
+        oled_status_set_last_event("run-start");
     }
     
     is_pipeline_active = true;
+    oled_status_set_va_state(OLED_VA_LISTENING);
     warmup_chunks_skip = 2; 
     return audio_capture_start(audio_capture_handler);
 }
 
 static void on_tts_complete(void) {
+    tts_stream_active = false;
+    oled_status_set_tts_state(OLED_TTS_IDLE);
+    oled_status_set_last_event("tts-done");
     if (music_paused_for_tts) {
         local_music_player_resume();
         music_paused_for_tts = false;
@@ -482,8 +501,16 @@ static void tts_audio_handler(const uint8_t *audio_data, size_t length) {
     if (audio_data == NULL || length == 0) {
         // End of stream: signal the player to start playback, but do NOT resume WWD here.
         // Resuming happens from `on_tts_complete()` after audio playback actually finishes.
+        oled_status_set_tts_state(OLED_TTS_PLAYING);
+        oled_status_set_last_event("tts-play");
         (void)tts_player_feed(NULL, 0);
     } else {
+        if (!tts_stream_active) {
+            tts_stream_active = true;
+            oled_status_set_tts_state(OLED_TTS_DOWNLOADING);
+            oled_status_set_last_event("tts-start");
+            oled_status_set_va_state(OLED_VA_SPEAKING);
+        }
         tts_player_feed(audio_data, length);
     }
 }
@@ -504,6 +531,7 @@ static void conversation_response_handler(const char *response_text, const char 
         timer_local_handled = false;
         suppress_tts_audio = true;
         followup_vad_pending = false;
+        oled_status_set_response_preview("TIMER");
         if (mqtt_ha_is_connected()) {
             mqtt_ha_update_sensor("va_response", local_timer_seconds > 0 ? "TIMER POSTAVLJEN" : "TIMER");
             mqtt_ha_update_sensor("va_status", "SPREMAN");
@@ -517,6 +545,7 @@ static void conversation_response_handler(const char *response_text, const char 
         ESP_LOGI(TAG, "HA asked for music selection; playing local SD music");
         suppress_tts_audio = true;
         followup_vad_pending = false;
+        oled_status_set_response_preview("GLAZBA");
         handle_local_music_play();
         if (mqtt_ha_is_connected()) {
             mqtt_ha_update_sensor("va_response", "PUSTAM GLAZBU");
@@ -535,6 +564,7 @@ static void conversation_response_handler(const char *response_text, const char 
         mqtt_ha_update_sensor("va_response", response_text ? response_text : "...");
         mqtt_ha_update_sensor("va_status", "GOVORIM...");
     }
+    oled_status_set_response_preview(response_text ? response_text : "");
     
     if (!response_text || strlen(response_text) == 0) {
         pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
@@ -549,6 +579,7 @@ static void intent_handler(const char *intent_name, const char *intent_data, con
     }
 
     ESP_LOGI(TAG, "HA intent: %s", intent_name);
+    oled_status_set_last_event("intent-end");
 
     if (strstr(intent_name, "Timer") || strstr(intent_name, "timer")) {
         if (timer_started_from_stt &&

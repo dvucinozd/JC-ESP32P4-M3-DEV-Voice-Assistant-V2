@@ -172,6 +172,10 @@ const char* sys_diag_get_reset_reason(void) {
     return reset_reason_str;
 }
 
+int sys_diag_get_boot_count(void) {
+    return boot_count;
+}
+
 void sys_diag_report_status(void) {
     if (mqtt_ha_is_connected()) {
         char msg[128];

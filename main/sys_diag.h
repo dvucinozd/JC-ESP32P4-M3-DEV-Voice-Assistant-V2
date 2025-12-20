@@ -47,6 +47,11 @@ void sys_diag_wdt_remove(void);
 const char* sys_diag_get_reset_reason(void);
 
 /**
+ * @brief Get boot loop counter
+ */
+int sys_diag_get_boot_count(void);
+
+/**
  * @brief Report status to MQTT/Logs
  * Should be called after WiFi/MQTT connection established.
  */

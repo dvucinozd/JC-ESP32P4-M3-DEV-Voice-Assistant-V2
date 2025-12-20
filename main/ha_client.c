@@ -20,6 +20,7 @@
 #include "audio_capture.h"
 #include "config.h" // For fallback/defaults if needed
 #include "ha_client.h"
+#include "oled_status.h"
 
 static const char *TAG = "ha_client";
 
@@ -202,6 +203,7 @@ static void ha_set_audio_ready(int handler_id, const char *source) {
   stt_binary_handler_id = handler_id;
   if (ha_event_group) xEventGroupSetBits(ha_event_group, HA_AUDIO_READY_BIT);
   ESP_LOGI(TAG, "STT binary handler ID: %d (%s)", stt_binary_handler_id, source ? source : "unknown");
+  oled_status_set_last_event("stt-bin");
 }
 
 static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -212,6 +214,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     ESP_LOGI(TAG, "WebSocket connected");
     ws_connected = true;
     xEventGroupSetBits(ha_event_group, HA_CONNECTED_BIT);
+    oled_status_set_last_event("ws-up");
 
     // Send authentication
     char auth_msg[1024];
@@ -227,6 +230,8 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     ws_authenticated = false;
     ha_clear_audio_ready();
     xEventGroupClearBits(ha_event_group, HA_CONNECTED_BIT | HA_AUTHENTICATED_BIT | HA_AUDIO_READY_BIT);
+    oled_status_set_ha_connected(false);
+    oled_status_set_last_event("ws-down");
     break;
 
   case WEBSOCKET_EVENT_DATA:
@@ -248,9 +253,13 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
         ESP_LOGI(TAG, "Auth successful");
         ws_authenticated = true;
         xEventGroupSetBits(ha_event_group, HA_AUTHENTICATED_BIT);
+        oled_status_set_ha_connected(true);
+        oled_status_set_last_event("auth-ok");
     } else if (type && strcmp(type->valuestring, "auth_invalid") == 0) {
         ESP_LOGE(TAG, "Auth failed");
         ws_authenticated = false;
+        oled_status_set_ha_connected(false);
+        oled_status_set_last_event("auth-bad");
     } else if (type && strcmp(type->valuestring, "event") == 0) {
         cJSON *event = cJSON_GetObjectItem(json, "event");
         if (event) {

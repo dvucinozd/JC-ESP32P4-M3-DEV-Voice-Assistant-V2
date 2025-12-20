@@ -17,6 +17,7 @@
 #define NETWORK_MANAGER_H
 
 #include "esp_err.h"
+#include "esp_netif.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -77,6 +78,22 @@ bool network_manager_is_connected(void);
  * @return ESP_OK if IP retrieved, ESP_FAIL if no network
  */
 esp_err_t network_manager_get_ip(char *ip_str);
+
+/**
+ * @brief Get IP info (ip/gw/netmask) for active interface
+ *
+ * @param info Output ip info
+ * @return ESP_OK if retrieved, ESP_FAIL if no network
+ */
+esp_err_t network_manager_get_ip_info(esp_netif_ip_info_t *info);
+
+/**
+ * @brief Get DNS info for active interface (primary DNS)
+ *
+ * @param info Output DNS info
+ * @return ESP_OK if retrieved, ESP_FAIL if no network
+ */
+esp_err_t network_manager_get_dns_info(esp_netif_dns_info_t *info);
 
 /**
  * @brief Register callback for network events

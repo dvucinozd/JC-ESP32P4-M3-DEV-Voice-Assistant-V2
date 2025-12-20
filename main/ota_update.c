@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "led_status.h"
+#include "oled_status.h"
 #include <string.h>
 
 static const char *TAG = "ota_update";
@@ -70,6 +71,8 @@ static void ota_update_task(void *pvParameter) {
 
   ESP_LOGI(TAG, "Starting OTA update from: %s", url);
   notify_progress(OTA_STATE_DOWNLOADING, 0, "Starting OTA update");
+  oled_status_set_ota_state(OLED_OTA_RUNNING);
+  oled_status_set_last_event("ota-start");
 
   // Set LED to OTA mode (white breathing)
   led_status_set(LED_STATUS_OTA);
@@ -230,6 +233,8 @@ static void ota_update_task(void *pvParameter) {
 
   ESP_LOGI(TAG, "OTA update successful!");
   notify_progress(OTA_STATE_SUCCESS, 100, "Update successful - Rebooting...");
+  oled_status_set_ota_state(OLED_OTA_OK);
+  oled_status_set_last_event("ota-ok");
 
   vTaskDelay(pdMS_TO_TICKS(2000));
   esp_restart();
@@ -239,6 +244,8 @@ ota_end:
   // failure)
   if (ota_state == OTA_STATE_FAILED) {
     led_status_set(LED_STATUS_IDLE);
+    oled_status_set_ota_state(OLED_OTA_ERROR);
+    oled_status_set_last_event("ota-fail");
   }
 
   // Free buffer

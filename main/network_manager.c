@@ -44,6 +44,16 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
 static void ip_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data);
 
+static esp_netif_t *get_active_netif(void) {
+    if (active_network == NETWORK_TYPE_ETHERNET) {
+        return eth_netif;
+    }
+    if (active_network == NETWORK_TYPE_WIFI) {
+        return esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    }
+    return NULL;
+}
+
 typedef enum {
     WIFI_FALLBACK_CMD_START = 0,
     WIFI_FALLBACK_CMD_STOP = 1,
@@ -371,13 +381,7 @@ esp_err_t network_manager_get_ip(char *ip_str)
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_netif_t *netif = NULL;
-
-    if (active_network == NETWORK_TYPE_ETHERNET) {
-        netif = eth_netif;
-    } else if (active_network == NETWORK_TYPE_WIFI) {
-        netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    }
+    esp_netif_t *netif = get_active_netif();
 
     if (netif == NULL) {
         strcpy(ip_str, "0.0.0.0");
@@ -393,6 +397,34 @@ esp_err_t network_manager_get_ip(char *ip_str)
 
     strcpy(ip_str, "0.0.0.0");
     return ESP_FAIL;
+}
+
+esp_err_t network_manager_get_ip_info(esp_netif_ip_info_t *info)
+{
+    if (!info) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_netif_t *netif = get_active_netif();
+    if (netif == NULL) {
+        return ESP_FAIL;
+    }
+
+    return esp_netif_get_ip_info(netif, info);
+}
+
+esp_err_t network_manager_get_dns_info(esp_netif_dns_info_t *info)
+{
+    if (!info) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_netif_t *netif = get_active_netif();
+    if (netif == NULL) {
+        return ESP_FAIL;
+    }
+
+    return esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, info);
 }
 
 /**

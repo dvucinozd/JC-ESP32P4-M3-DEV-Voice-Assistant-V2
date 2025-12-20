@@ -7,6 +7,7 @@
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
+#include "oled_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -216,6 +217,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(TAG, "MQTT connected to Home Assistant");
     mqtt_connected = true;
+    oled_status_set_mqtt_connected(true);
+    oled_status_set_last_event("mqtt-up");
 
     mqtt_ha_cleanup_legacy_discovery();
 
@@ -241,6 +244,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGW(TAG, "MQTT disconnected");
     mqtt_connected = false;
+    oled_status_set_mqtt_connected(false);
+    oled_status_set_last_event("mqtt-down");
     break;
 
   case MQTT_EVENT_DATA:
