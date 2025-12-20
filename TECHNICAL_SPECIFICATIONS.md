@@ -89,5 +89,4 @@ Ostale ovisnosti (vidi `main/CMakeLists.txt` `REQUIRES` / `PRIV_REQUIRES`):
 ## Web sučelje i debug
 
 - HTTP server: status/dashboard + WebSerial log stream
-- `help_scripts/`: skripte za čitanje HA state-a i logova preko WS API-ja (koriste env var ili lokalni `main/config.h`; tajne se ne commitaju)
-
+- `help_scripts/`: skripte za čitanje HA state-a i logova preko WS API-ja (koriste lokalni `main/config.h`; tajne se ne commitaju)

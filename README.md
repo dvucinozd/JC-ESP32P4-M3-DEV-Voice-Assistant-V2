@@ -57,10 +57,10 @@ Tijekom OTA LED status je `OTA` (bijelo brzo pulsiranje).
 
 Entiteti se pojave automatski (MQTT Discovery).
 
-- Senzori: `VA Status`, `VA Response`, `WiFi Signal`, `IP Address`
-- Kontrole: `Wake Word Detection` (switch), `LED Brightness` (number), `Output Volume` (number)
+- Senzori: `VA Status`, `VA Response`, `WiFi Signal` (RSSI dBm), `IP Address`, `Firmware Version`, `Free Memory`, `Uptime`, `Network Type`, `Music State`, `OTA Status/Progress`, `SD Card Status`, `WebSerial Clients`
+- Kontrole: `Wake Word Detection`, `Auto Gain Control`, `LED Status Indicator` (switch), `LED Brightness`, `Output Volume`, `AGC Target Level`, `WWD Detection Threshold`, `VAD` (threshold/silence/min/max)
 - OTA: `OTA URL` (text), `Start OTA` (button)
-- Test/utility: `Test TTS` (button), `Restart Device` (button), `Play Music`/`Stop Music` (buttons), `LED Test` (button)
+- Test/utility: `Test TTS`, `Restart Device`, `Play Music`/`Stop Music`, `LED Test`, `Diagnostic Dump` (button)
 
 `VA Status` i `VA Response` su namijenjeni i za prikaz na drugim uređajima (npr. ESPHome CYD ekran) preko HA entiteta.
 
@@ -80,11 +80,12 @@ LED statusi su implementirani u `main/led_status.c` i vezani uz VA/OTA događaje
 
 - LED ode u crveno nakon ~1 minute: uređaj je ušao u Safe Mode (boot‑loop zaštita). Provjeriti serijski log; `main/sys_diag.c` sada koristi worker task (NVS se više ne dira iz timer callback‑a).
 - Ne vidiš MQTT entitete u HA: provjeri broker URI/cred u `main/config.h`/NVS i da je MQTT integracija u HA aktivna.
+- Dupli MQTT entiteti nakon promjena imena: reload MQTT integraciju u HA ili obriši retain discovery topic-e na brokeru.
 - Prejak zvuk: koristi `Output Volume` slider u HA (vrijednost se sprema u NVS).
 
 ## Pomoćne skripte
 
-`help_scripts/` sadrži skripte za čitanje HA stanja/logova preko WebSocket API‑ja (token se uzima iz env var ili iz `main/config.h` lokalno).
+`help_scripts/` sadrži skripte za čitanje HA stanja/logova preko WebSocket API‑ja (token se uzima iz `main/config.h` lokalno). Najčešće: `list_ha_states_from_config.py` i `check_ha_logs_from_config.py`.
 
 ## Tehničke specifikacije
 

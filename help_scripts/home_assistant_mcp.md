@@ -1,20 +1,21 @@
 # Upute za spajanje na Home Assistant preko MCP-a
 
-Ovaj dokument opisuje provjereni postupak kako drugi AI agent može pokretati FastMCP server iz ovog repozitorija, spajati se na Home Assistant instancu i dohvaćati logove ili druge podatke.
+Ovaj dokument opisuje provjereni postupak kako drugi AI agent može dohvatiti logove ili druge podatke iz Home Assistanta. Ovaj repozitorij ne sadrži MCP server skripte; koristi `help_scripts/` ili vlastiti MCP server ako ga već imaš.
 
 ## 1. Preduvjeti
 
 - Instaliran MCP CLI za odgovarajući Python interpreter: `python -m pip install "mcp[cli]"`.
 - U Windows PowerShellu je dostupan Python 3.11 s `pip`-om (koristi se za skripte koje rade s Home Assistantom). WSL-ov `python3` u ovom okruženju nema `pip` ni `ensurepip`, pa ga ne koristi za dodatne pakete.
-- U `esphome/secrets.yaml` su popunjeni `home_assistant_base_url`, `home_assistant_token` i `home_assistant_verify_ssl`.
+- HA postavke su u `main/config.h` (lokalno, ne ide u git).
 - Za dohvat logova potreban je paket `websocket-client`: `python -m pip install --user websocket-client`.
 
 ## 2. Konfiguracija tajni
 
-1. Otvori `esphome/secrets.yaml` i provjeri:
-   - `home_assistant_base_url`: npr. `http://kucni.local:9000`.
-   - `home_assistant_token`: valjani long-lived token (20+ znakova).
-   - `home_assistant_verify_ssl`: `false` ako HA koristi lokalni certifikat koji nije u trust storeu.
+1. Otvori `main/config.h` i provjeri:
+   - `HA_HOST` / `HA_HOSTNAME`: npr. `192.168.0.163`.
+   - `HA_PORT`: `9000`.
+   - `HA_TOKEN`: valjani long-lived token (20+ znakova).
+   - `HA_USE_SSL`: `false` ako HA koristi HTTP.
 2. Vrijednosti se mogu privremeno nadjačati iz PowerShella:
    ```powershell
    $env:HOME_ASSISTANT_BASE_URL = 'https://example.local:9000'
@@ -27,28 +28,18 @@ Ovaj dokument opisuje provjereni postupak kako drugi AI agent može pokretati Fa
 
 ### 3.1 Bash/WSL
 
-```bash
-scripts/esphome/run-home-assistant-mcp.sh --base-url http://kucni.local:9000
-```
-
-- Opcionalno dodaj `--transport sse` ili `--transport streamable-http` ako treba drugi MCP transport.
+Ovaj repo nema MCP server skripte. Ako koristiš vanjski MCP server, pokreni ga prema njegovim uputama.
 
 ### 3.2 Windows PowerShell
 
-Ako Git Bash ne vidi `mcp.exe`, pokreni server direktno:
-
-```powershell
-$env:HOME_ASSISTANT_BASE_URL='http://kucni.local:9000'
-python -m pip install --user "mcp[cli]"   # prvi put
-mcp run D:/AI/esp32-s3-voice-assistant/scripts/esphome/home_assistant_mcp_server.py:server
-```
+Ako Git Bash ne vidi `mcp.exe`, pokreni server direktno (prema dokumentaciji MCP servera koji koristiš).
 
 ### 3.3 Pregled preko MCP Inspectora
 
 U drugom terminalu:
 
 ```bash
-mcp dev scripts/esphome/home_assistant_mcp_server.py:server
+mcp dev <path_to_mcp_server_module>:server
 ```
 
 Konzola će ispisati lokalni URL i token za FastMCP Inspector; drži proces aktivnim dok pregledavaš.
@@ -65,7 +56,7 @@ Svi koriste REST API, pa je dovoljno imati valjane tajne.
 
 Home Assistant 2025.11.* više ne izlaže logove preko REST ruta (`/api/error_log`, `/api/system_log*` vraćaju 404). Za logove koristi WebSocket API `system_log/list`.
 
-Primjer skripte iz PowerShella:
+Primjer skripte iz PowerShella (čita `main/config.h`):
 
 ```powershell
 @'
@@ -74,13 +65,30 @@ import ssl
 from pathlib import Path
 
 import websocket
-import yaml
 
 ROOT = Path('.').resolve()
-secrets = yaml.safe_load((ROOT / 'esphome' / 'secrets.yaml').read_text())
-base_url = secrets['home_assistant_base_url'].rstrip('/')
-token = secrets['home_assistant_token']
-verify_ssl = secrets.get('home_assistant_verify_ssl', True)
+cfg = (ROOT / 'main' / 'config.h').read_text(encoding='utf-8', errors='replace')
+def define(name):
+    import re
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+\"([^\"]*)\"', cfg, re.MULTILINE)
+    return m.group(1).strip() if m else None
+def define_int(name):
+    import re
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+([0-9]+)', cfg, re.MULTILINE)
+    return int(m.group(1)) if m else None
+def define_bool(name):
+    import re
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).lower() in ('1', 'true')
+
+host = define('HA_HOST') or define('HA_HOSTNAME')
+port = define_int('HA_PORT') or 9000
+token = define('HA_TOKEN')
+use_ssl = define_bool('HA_USE_SSL') or False
+base_url = f"{'https' if use_ssl else 'http'}://{host}:{port}"
+verify_ssl = use_ssl
 
 ws_url = ('wss://' if base_url.startswith('https://') else 'ws://') + base_url.split('://', 1)[1] + '/api/websocket'
 sslopt = None
@@ -109,11 +117,26 @@ Brza REST provjera:
 
 ```powershell
 python - <<'PY'
-import requests, yaml
-secrets = yaml.safe_load(open('esphome/secrets.yaml', encoding='utf-8'))
-url = secrets['home_assistant_base_url'].rstrip('/') + '/api/'
-headers = {'Authorization': f"Bearer {secrets['home_assistant_token']}"}
-resp = requests.get(url, headers=headers, verify=bool(secrets.get('home_assistant_verify_ssl', True)))
+import requests, re
+cfg = open('main/config.h', encoding='utf-8').read()
+def define(name):
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+\"([^\"]*)\"', cfg, re.MULTILINE)
+    return m.group(1).strip() if m else None
+def define_int(name):
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+([0-9]+)', cfg, re.MULTILINE)
+    return int(m.group(1)) if m else None
+def define_bool(name):
+    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).lower() in ('1', 'true')
+host = define('HA_HOST') or define('HA_HOSTNAME')
+port = define_int('HA_PORT') or 9000
+token = define('HA_TOKEN')
+use_ssl = define_bool('HA_USE_SSL') or False
+url = f"{'https' if use_ssl else 'http'}://{host}:{port}/api/"
+headers = {'Authorization': f"Bearer {token}"}
+resp = requests.get(url, headers=headers, verify=use_ssl)
 print(resp.status_code, resp.text)
 PY
 ```
@@ -128,7 +151,7 @@ PY
 | REST `/api/error_log` vraća 404 | Endpoint uklonjen | Koristi WebSocket `system_log/list` kao gore |
 | `ModuleNotFoundError: websocket` | Paket nije instaliran | `python -m pip install --user websocket-client` (PowerShell) |
 | `python3 -m pip` u WSL javlja “No module named pip” | OS image bez ensurepip | Pokreći skripte koje trebaju dodatne pakete iz Windows Pythona |
-| SSL greške pri spajanju | Samopotpisani certifikat | Stavi `home_assistant_verify_ssl: false` u `secrets.yaml` (ili exportaj `HOME_ASSISTANT_VERIFY_SSL=0`) |
+| SSL greške pri spajanju | Samopotpisani certifikat | Postavi `HA_USE_SSL` na `false` u `main/config.h` ili koristi validan certifikat |
 
 ## 8. Što agent treba prijaviti korisniku
 
