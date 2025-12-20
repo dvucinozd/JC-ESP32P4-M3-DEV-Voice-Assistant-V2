@@ -44,10 +44,13 @@ static mqtt_entity_t entities[MAX_ENTITIES];
 static int entity_count = 0;
 static bool legacy_cleanup_done = false;
 
-#define LEGACY_DISCOVERY_COUNT 2
+#define LEGACY_DISCOVERY_COUNT 5
 static const char *legacy_discovery_topics[LEGACY_DISCOVERY_COUNT] = {
     "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_vad_silence_duration/config",
-    "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_vad_max_recording_duration/config"
+    "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_vad_max_recording_duration/config",
+    "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_wwd_detection_threshold/config",
+    "homeassistant/sensor/esp32p4_voice_assistant/esp32_p4_voice_assistant_wifi_signal/config",
+    "homeassistant/sensor/esp32p4_voice_assistant/esp32_p4_voice_assistant_wifi_rssi/config"
 };
 
 static void mqtt_ha_cleanup_legacy_discovery(void) {
