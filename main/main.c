@@ -174,6 +174,10 @@ static void mqtt_publish_telemetry(void) {
         snprintf(buf, sizeof(buf), "%d", rssi);
         mqtt_ha_update_sensor("wifi_rssi", buf);
         mqtt_ha_update_sensor("wifi_signal", buf);
+    } else {
+        snprintf(buf, sizeof(buf), "%d", -127);
+        mqtt_ha_update_sensor("wifi_rssi", buf);
+        mqtt_ha_update_sensor("wifi_signal", buf);
     }
 
     float agc_gain = audio_capture_get_agc_gain();
@@ -199,9 +203,8 @@ static void mqtt_publish_telemetry(void) {
     }
     mqtt_ha_update_sensor("firmware_version", fw);
 
-    if (ota_url_value[0] != '\0') {
-        mqtt_ha_update_sensor("ota_update_url", ota_url_value);
-    }
+    mqtt_ha_update_sensor("ota_update_url",
+                          (ota_url_value[0] != '\0') ? ota_url_value : "NOT_SET");
 
     float wwd = va_control_get_wwd_threshold();
     mqtt_ha_update_number("wwd_detection_threshold", wwd);
@@ -423,6 +426,8 @@ static void mqtt_ota_url_callback(const char *entity_id, const char *payload) {
 
     ESP_LOGI(TAG, "OTA URL set via MQTT: %s", ota_url_value);
     (void)mqtt_ha_update_text("ota_url_input", ota_url_value);
+    mqtt_ha_update_sensor("ota_update_url",
+                          (ota_url_value[0] != '\0') ? ota_url_value : "NOT_SET");
 
     // Save to settings
     app_settings_t s;
@@ -576,6 +581,8 @@ static void mqtt_setup_task(void *arg) {
     if (ota_url_value[0] != '\0') {
         mqtt_ha_update_text("ota_url_input", ota_url_value);
         mqtt_ha_update_sensor("ota_update_url", ota_url_value);
+    } else {
+        mqtt_ha_update_sensor("ota_update_url", "NOT_SET");
     }
 
     mqtt_publish_telemetry();
