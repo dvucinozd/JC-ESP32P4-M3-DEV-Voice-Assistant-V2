@@ -4,7 +4,7 @@
 
 #include "mqtt_ha.h"
 #include "cJSON.h"
-#include "esp_app_format.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include <stdio.h>
