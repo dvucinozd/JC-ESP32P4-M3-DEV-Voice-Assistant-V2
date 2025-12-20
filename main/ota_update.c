@@ -7,6 +7,7 @@
 #include "esp_app_format.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
@@ -16,6 +17,8 @@
 
 static const char *TAG = "ota_update";
 
+#define OTA_TASK_STACK_WORDS 4096
+
 // OTA state
 static ota_state_t ota_state = OTA_STATE_IDLE;
 static int ota_progress = 0;
@@ -24,6 +27,12 @@ static ota_progress_callback_t progress_callback = NULL;
 
 // Task handle
 static TaskHandle_t ota_task_handle = NULL;
+
+typedef struct {
+  char *url;
+  StackType_t *stack;
+  StaticTask_t *tcb;
+} ota_task_ctx_t;
 
 /**
  * @brief Notify progress callback
@@ -44,7 +53,8 @@ static void notify_progress(ota_state_t state, int progress,
  * @brief OTA update task - Uses direct HTTP client + OTA ops for HTTP support
  */
 static void ota_update_task(void *pvParameter) {
-  const char *url = (const char *)pvParameter;
+  ota_task_ctx_t *ctx = (ota_task_ctx_t *)pvParameter;
+  const char *url = ctx ? ctx->url : NULL;
   esp_err_t ret = ESP_FAIL;
   esp_ota_handle_t ota_handle = 0;
   const esp_partition_t *update_partition = NULL;
@@ -52,6 +62,11 @@ static void ota_update_task(void *pvParameter) {
   const int buffer_size = 4096;
   int total_read = 0;
   int content_length = 0;
+
+  if (!url) {
+    ESP_LOGE(TAG, "OTA URL is NULL");
+    goto ota_end;
+  }
 
   ESP_LOGI(TAG, "Starting OTA update from: %s", url);
   notify_progress(OTA_STATE_DOWNLOADING, 0, "Starting OTA update");
@@ -232,7 +247,18 @@ ota_end:
   }
 
   // Free URL string
-  free((void *)url);
+  if (ctx) {
+    if (ctx->url) {
+      free(ctx->url);
+    }
+    if (ctx->stack) {
+      heap_caps_free(ctx->stack);
+    }
+    if (ctx->tcb) {
+      heap_caps_free(ctx->tcb);
+    }
+    free(ctx);
+  }
 
   ota_running = false;
   ota_task_handle = NULL;
@@ -271,9 +297,16 @@ esp_err_t ota_update_start(const char *url) {
   ESP_LOGI(TAG, "Starting OTA update task");
 
   // Duplicate URL string (task will free it)
-  char *url_copy = strdup(url);
-  if (!url_copy) {
+  ota_task_ctx_t *ctx = (ota_task_ctx_t *)calloc(1, sizeof(*ctx));
+  if (!ctx) {
+    ESP_LOGE(TAG, "Failed to allocate OTA context");
+    return ESP_ERR_NO_MEM;
+  }
+
+  ctx->url = strdup(url);
+  if (!ctx->url) {
     ESP_LOGE(TAG, "Failed to allocate URL string");
+    free(ctx);
     return ESP_ERR_NO_MEM;
   }
 
@@ -282,14 +315,45 @@ esp_err_t ota_update_start(const char *url) {
   ota_progress = 0;
 
   // Create OTA task
-  BaseType_t ret = xTaskCreate(ota_update_task, "ota_update_task", 8192,
-                               (void *)url_copy, 5, &ota_task_handle);
+  BaseType_t ret = xTaskCreate(ota_update_task, "ota_update_task",
+                               OTA_TASK_STACK_WORDS, (void *)ctx, 5,
+                               &ota_task_handle);
 
   if (ret != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create OTA task");
-    free(url_copy);
-    ota_running = false;
-    return ESP_FAIL;
+    ESP_LOGW(TAG, "OTA task create failed; internal free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+
+    ctx->stack = (StackType_t *)heap_caps_malloc(
+        OTA_TASK_STACK_WORDS * sizeof(StackType_t),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ctx->tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t),
+                                                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!ctx->stack || !ctx->tcb) {
+      ESP_LOGE(TAG, "Failed to allocate OTA task stack/TCB");
+      if (ctx->stack) {
+        heap_caps_free(ctx->stack);
+      }
+      if (ctx->tcb) {
+        heap_caps_free(ctx->tcb);
+      }
+      free(ctx->url);
+      free(ctx);
+      ota_running = false;
+      return ESP_FAIL;
+    }
+
+    ota_task_handle = xTaskCreateStaticPinnedToCore(
+        ota_update_task, "ota_update_task", OTA_TASK_STACK_WORDS, (void *)ctx,
+        5, ctx->stack, ctx->tcb, tskNO_AFFINITY);
+    if (ota_task_handle == NULL) {
+      ESP_LOGE(TAG, "Failed to create OTA task (static)");
+      heap_caps_free(ctx->stack);
+      heap_caps_free(ctx->tcb);
+      free(ctx->url);
+      free(ctx);
+      ota_running = false;
+      return ESP_FAIL;
+    }
   }
 
   return ESP_OK;
