@@ -12,7 +12,7 @@ Ovaj dokument opisuje provjereni postupak kako drugi AI agent može dohvatiti lo
 ## 2. Konfiguracija tajni
 
 1. Otvori `main/config.h` i provjeri:
-   - `HA_HOST` / `HA_HOSTNAME`: npr. `192.168.0.163`.
+   - `HA_HOST` / `HA_HOSTNAME`: npr. `<HA_IP>`.
    - `HA_PORT`: `9000`.
    - `HA_TOKEN`: valjani long-lived token (20+ znakova).
    - `HA_USE_SSL`: `false` ako HA koristi HTTP.

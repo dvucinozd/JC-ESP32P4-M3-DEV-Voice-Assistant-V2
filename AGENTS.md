@@ -5,7 +5,7 @@ Context
 -------
 - Board: JC-ESP32P4-M3-DEV (ESP32-P4, ES8311 codec, SD card).
 - Wake word: WakeNet9, model `wn9_hiesp`, 16 kHz mono, threshold 0.50-0.95 (runtime adjustable).
-- HA Assist pipeline via WebSocket (`ws://192.168.0.163:9000/api/websocket`), MQTT broker `mqtt://192.168.0.163:1883`.
+- HA Assist pipeline via WebSocket (`ws://<HA_IP>:9000/api/websocket`), MQTT broker `mqtt://<HA_IP>:1883`.
 - OTA binary: `build/esp32_p4_voice_assistant.bin`.
 - OTA URL (local server): `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin` (`ota_server.bat` prints the URL).
 
