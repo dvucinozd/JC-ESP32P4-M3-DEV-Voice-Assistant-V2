@@ -7,6 +7,9 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "esp_check.h"
 
@@ -28,6 +31,7 @@
 #include "va_control.h"
 #include "webserial.h"
 #include "local_music_player.h"
+#include "audio_capture.h"
 #include "alarm_manager.h" 
 #include "sys_diag.h" // Phase 9
 
@@ -38,6 +42,15 @@ static TaskHandle_t post_connect_task_handle = NULL;
 static char ota_url_value[256] = {0};
 static TaskHandle_t music_control_task_handle = NULL;
 static bool audio_hw_ready = false;
+static TaskHandle_t metrics_task_handle = NULL;
+
+static const char *ota_state_to_string(ota_state_t state);
+static const char *music_state_to_string(music_state_t state);
+static void mqtt_update_music_state(music_state_t state, int current_track, int total_tracks);
+static void mqtt_publish_telemetry(void);
+static void mqtt_metrics_task(void *arg);
+static bool get_wifi_rssi(int *out_rssi);
+static void ota_progress_handler(ota_state_t state, int progress, const char *message);
 
 typedef enum {
     MUSIC_CMD_PLAY = 0,
@@ -72,6 +85,152 @@ static void music_control_task(void *arg) {
 
     music_control_task_handle = NULL;
     vTaskDelete(NULL);
+}
+
+static const char *ota_state_to_string(ota_state_t state) {
+    switch (state) {
+        case OTA_STATE_IDLE:
+            return "IDLE";
+        case OTA_STATE_DOWNLOADING:
+            return "DOWNLOADING";
+        case OTA_STATE_VERIFYING:
+            return "VERIFYING";
+        case OTA_STATE_SUCCESS:
+            return "SUCCESS";
+        case OTA_STATE_FAILED:
+            return "FAILED";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static const char *music_state_to_string(music_state_t state) {
+    switch (state) {
+        case MUSIC_STATE_PLAYING:
+            return "PLAYING";
+        case MUSIC_STATE_PAUSED:
+            return "PAUSED";
+        case MUSIC_STATE_STOPPED:
+            return "STOPPED";
+        case MUSIC_STATE_IDLE:
+        default:
+            return "IDLE";
+    }
+}
+
+static bool get_wifi_rssi(int *out_rssi) {
+    if (!out_rssi) return false;
+
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
+        return false;
+    }
+    *out_rssi = ap_info.rssi;
+    return true;
+}
+
+static void mqtt_update_music_state(music_state_t state, int current_track, int total_tracks) {
+    if (!mqtt_ha_is_connected()) {
+        return;
+    }
+
+    mqtt_ha_update_sensor("music_state", music_state_to_string(state));
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", total_tracks);
+    mqtt_ha_update_sensor("total_tracks", buf);
+
+    if (current_track >= 0) {
+        char name[64];
+        if (local_music_player_get_track_name(name, sizeof(name)) == ESP_OK) {
+            mqtt_ha_update_sensor("current_track", name);
+        } else {
+            snprintf(buf, sizeof(buf), "%d", current_track + 1);
+            mqtt_ha_update_sensor("current_track", buf);
+        }
+    } else {
+        mqtt_ha_update_sensor("current_track", "None");
+    }
+}
+
+static void mqtt_publish_telemetry(void) {
+    if (!mqtt_ha_is_connected()) {
+        return;
+    }
+
+    char buf[64];
+
+    snprintf(buf, sizeof(buf), "%u", (unsigned int)esp_get_free_heap_size());
+    mqtt_ha_update_sensor("free_memory", buf);
+
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)(esp_timer_get_time() / 1000000ULL));
+    mqtt_ha_update_sensor("uptime", buf);
+
+    network_type_t active = network_manager_get_active_type();
+    mqtt_ha_update_sensor("network_type", network_manager_type_to_string(active));
+
+    int rssi = 0;
+    if (get_wifi_rssi(&rssi)) {
+        snprintf(buf, sizeof(buf), "%d", rssi);
+        mqtt_ha_update_sensor("wifi_rssi", buf);
+        mqtt_ha_update_sensor("wifi_signal", buf);
+    }
+
+    float agc_gain = audio_capture_get_agc_gain();
+    snprintf(buf, sizeof(buf), "%.2f", (double)agc_gain);
+    mqtt_ha_update_sensor("agc_current_gain", buf);
+
+    snprintf(buf, sizeof(buf), "%d", webserial_get_client_count());
+    mqtt_ha_update_sensor("webserial_clients", buf);
+
+    mqtt_update_music_state(local_music_player_get_state(),
+                            local_music_player_get_current_track(),
+                            local_music_player_get_total_tracks());
+
+    mqtt_ha_update_sensor("ota_status", ota_state_to_string(ota_update_get_state()));
+    snprintf(buf, sizeof(buf), "%d", ota_update_get_progress());
+    mqtt_ha_update_sensor("ota_progress", buf);
+
+    mqtt_ha_update_sensor("sd_card_status", bsp_sdcard ? "MOUNTED" : "NOT_MOUNTED");
+
+    const char *fw = ota_update_get_current_version();
+    if (!fw || fw[0] == '\0') {
+        fw = FIRMWARE_VERSION;
+    }
+    mqtt_ha_update_sensor("firmware_version", fw);
+
+    if (ota_url_value[0] != '\0') {
+        mqtt_ha_update_sensor("ota_update_url", ota_url_value);
+    }
+
+    float wwd = va_control_get_wwd_threshold();
+    mqtt_ha_update_number("wwd_detection_threshold", wwd);
+
+    mqtt_ha_update_switch("auto_gain_control", va_control_get_agc_enabled());
+    mqtt_ha_update_number("agc_target_level", (float)va_control_get_agc_target_level());
+
+    mqtt_ha_update_switch("led_status_indicator", led_status_is_enabled());
+    mqtt_ha_update_switch("wwd_enabled", voice_pipeline_is_running());
+}
+
+static void mqtt_metrics_task(void *arg) {
+    (void)arg;
+    while (1) {
+        mqtt_publish_telemetry();
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+static void ota_progress_handler(ota_state_t state, int progress, const char *message) {
+    (void)message;
+    if (!mqtt_ha_is_connected()) {
+        return;
+    }
+
+    mqtt_ha_update_sensor("ota_status", ota_state_to_string(state));
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", progress);
+    mqtt_ha_update_sensor("ota_progress", buf);
 }
 
 static void post_connect_task(void *arg) {
@@ -200,6 +359,61 @@ static void mqtt_output_volume_callback(const char *entity_id, const char *paylo
     }
 }
 
+static void mqtt_wwd_threshold_callback(const char *entity_id, const char *payload) {
+    (void)entity_id;
+    if (!payload) return;
+
+    char *end = NULL;
+    float v = strtof(payload, &end);
+    if (end == payload) {
+        ESP_LOGW(TAG, "Invalid WWD threshold payload: %s", payload);
+        return;
+    }
+
+    if (v < 0.5f) v = 0.5f;
+    if (v > 0.95f) v = 0.95f;
+
+    va_control_set_wwd_threshold(v);
+    mqtt_ha_update_number("wwd_detection_threshold", v);
+}
+
+static void mqtt_agc_enabled_callback(const char *entity_id, const char *payload) {
+    (void)entity_id;
+    if (!payload) return;
+
+    bool enable = (strcmp(payload, "ON") == 0);
+    va_control_set_agc_enabled(enable);
+    mqtt_ha_update_switch("auto_gain_control", enable);
+}
+
+static void mqtt_agc_target_callback(const char *entity_id, const char *payload) {
+    (void)entity_id;
+    if (!payload) return;
+
+    char *end = NULL;
+    float v = strtof(payload, &end);
+    if (end == payload) {
+        ESP_LOGW(TAG, "Invalid AGC target payload: %s", payload);
+        return;
+    }
+
+    if (v < 0.0f) v = 0.0f;
+    if (v > 10000.0f) v = 10000.0f;
+
+    uint16_t target = (uint16_t)lroundf(v);
+    va_control_set_agc_target_level(target);
+    mqtt_ha_update_number("agc_target_level", (float)target);
+}
+
+static void mqtt_led_indicator_callback(const char *entity_id, const char *payload) {
+    (void)entity_id;
+    if (!payload) return;
+
+    bool enable = (strcmp(payload, "ON") == 0);
+    led_status_enable(enable);
+    mqtt_ha_update_switch("led_status_indicator", enable);
+}
+
 static void mqtt_ota_url_callback(const char *entity_id, const char *payload) {
     (void)entity_id;
     if (!payload) return;
@@ -290,18 +504,38 @@ static void mqtt_setup_task(void *arg) {
     ESP_LOGI(TAG, "Registering HA Entities...");
     
     mqtt_ha_register_switch("wwd_enabled", "Wake Word Detection", mqtt_wwd_switch_callback);
+    mqtt_ha_register_switch("auto_gain_control", "Auto Gain Control", mqtt_agc_enabled_callback);
+    mqtt_ha_register_switch("led_status_indicator", "LED Status Indicator", mqtt_led_indicator_callback);
     mqtt_ha_register_button("restart", "Restart Device", mqtt_restart_callback);
     mqtt_ha_register_button("test_tts", "Test TTS", mqtt_test_tts_callback);
 
     mqtt_ha_register_sensor("va_status", "VA Status", NULL, NULL);
     mqtt_ha_register_sensor("va_response", "VA Response", NULL, NULL);
     mqtt_ha_register_sensor("wifi_rssi", "WiFi Signal", "dBm", "signal_strength");
+    mqtt_ha_register_sensor("wifi_signal", "WiFi Signal", "dBm", "signal_strength");
     mqtt_ha_register_sensor("ip_address", "IP Address", NULL, NULL);
+    mqtt_ha_register_sensor("free_memory", "Free Memory", "bytes", "data_size");
+    mqtt_ha_register_sensor("uptime", "Uptime", "s", NULL);
+    mqtt_ha_register_sensor("firmware_version", "Firmware Version", NULL, NULL);
+    mqtt_ha_register_sensor("network_type", "Network Type", NULL, NULL);
+    mqtt_ha_register_sensor("webserial_clients", "WebSerial Clients", NULL, NULL);
+    mqtt_ha_register_sensor("agc_current_gain", "AGC Current Gain", NULL, NULL);
+    mqtt_ha_register_sensor("music_state", "Music State", NULL, NULL);
+    mqtt_ha_register_sensor("current_track", "Current Track", NULL, NULL);
+    mqtt_ha_register_sensor("total_tracks", "Total Tracks", NULL, NULL);
+    mqtt_ha_register_sensor("sd_card_status", "SD Card Status", NULL, NULL);
+    mqtt_ha_register_sensor("ota_status", "OTA Status", NULL, NULL);
+    mqtt_ha_register_sensor("ota_progress", "OTA Progress", "%", NULL);
+    mqtt_ha_register_sensor("ota_update_url", "OTA Update URL", NULL, NULL);
 
     mqtt_ha_register_number("led_brightness", "LED Brightness", 0, 100, 1, "%",
                             mqtt_led_brightness_callback);
     mqtt_ha_register_number("output_volume", "Output Volume", 0, 100, 1, "%",
                             mqtt_output_volume_callback);
+    mqtt_ha_register_number("agc_target_level", "AGC Target Level", 0, 10000, 50, "",
+                            mqtt_agc_target_callback);
+    mqtt_ha_register_number("wwd_detection_threshold", "WWD Detection Threshold", 0.5f, 0.95f, 0.01f, "",
+                            mqtt_wwd_threshold_callback);
 
     mqtt_ha_register_text("ota_url_input", "OTA URL", mqtt_ota_url_callback);
     mqtt_ha_register_button("ota_trigger", "Start OTA", mqtt_ota_trigger_callback);
@@ -318,6 +552,8 @@ static void mqtt_setup_task(void *arg) {
     
     // Initial State
     mqtt_ha_update_switch("wwd_enabled", true);
+    mqtt_ha_update_switch("auto_gain_control", va_control_get_agc_enabled());
+    mqtt_ha_update_switch("led_status_indicator", led_status_is_enabled());
 
     // Publish current IP once MQTT is up (covers cases where network connected earlier).
     char ip_str[16];
@@ -328,6 +564,8 @@ static void mqtt_setup_task(void *arg) {
     // Publish initial LED brightness and OTA URL state.
     mqtt_ha_update_number("led_brightness", (float)led_status_get_brightness());
     mqtt_ha_update_number("output_volume", (float)bsp_extra_codec_volume_get());
+    mqtt_ha_update_number("agc_target_level", (float)va_control_get_agc_target_level());
+    mqtt_ha_update_number("wwd_detection_threshold", va_control_get_wwd_threshold());
 
     // Publish initial VAD settings
     mqtt_ha_update_number("vad_threshold", (float)va_control_get_vad_threshold());
@@ -337,6 +575,12 @@ static void mqtt_setup_task(void *arg) {
 
     if (ota_url_value[0] != '\0') {
         mqtt_ha_update_text("ota_url_input", ota_url_value);
+        mqtt_ha_update_sensor("ota_update_url", ota_url_value);
+    }
+
+    mqtt_publish_telemetry();
+    if (metrics_task_handle == NULL) {
+        xTaskCreate(mqtt_metrics_task, "mqtt_metrics", 4096, NULL, 4, &metrics_task_handle);
     }
     
     // Report System Status (Crash info)
@@ -357,6 +601,7 @@ static void network_event_callback(network_type_t type, bool connected) {
 static void music_state_callback(music_state_t state, int current_track, int total_tracks) {
     bool is_playing = (state == MUSIC_STATE_PLAYING || state == MUSIC_STATE_PAUSED);
     voice_pipeline_on_music_state_change(is_playing);
+    mqtt_update_music_state(state, current_track, total_tracks);
 }
 
 void app_main(void) {
@@ -391,6 +636,7 @@ void app_main(void) {
 
     // OTA module (available in both normal and safe mode)
     ota_update_init();
+    ota_update_register_callback(ota_progress_handler);
 
     // 4. Watchdog Init (30 seconds timeout)
     sys_diag_wdt_init(30);
