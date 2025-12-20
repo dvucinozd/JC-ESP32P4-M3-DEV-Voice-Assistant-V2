@@ -9,6 +9,23 @@ Context
 - OTA binary: `build/esp32_p4_voice_assistant.bin`.
 - OTA URL (local server): `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin` (`ota_server.bat` prints the URL).
 
+Recent fixes (Dec 20, 2025)
+---------------------------
+### OTA + WebSerial reliability
+- OTA now validates HTTP status, supports unknown `Content-Length`, logs errors clearly, and uses PSRAM stack fallback if needed.
+- WebSerial HTTP header limit raised to 8192 to avoid `431 Request Header Fields Too Large` on large requests.
+- OTA start failures now log error names for faster diagnosis.
+
+### MQTT + HA entities
+- `sw_version` uses `esp_app_get_description()->version` (include `esp_app_desc.h`).
+- WebSerial metric renamed to `webserial_requests` (it counts log requests, not active clients).
+- Legacy MQTT discovery cleanup clears old/duplicated entities on connect; update `legacy_discovery_topics` when renaming/removing entity IDs.
+- Added `diagnostic_dump` button (MQTT) to emit `sys_diag_report_status`.
+
+### Audio behavior
+- Timer/alarm beep now plays at max volume and then restores the previous output volume.
+- Guard against empty response text before indexing in voice pipeline response handling.
+
 Recent fixes (Dec 17, 2025)
 ---------------------------
 ### LED Status Improvements
@@ -39,6 +56,7 @@ Build/Flash
 - Build: `python build.py` (requires ESP-IDF 5.5 env). If shell lacks IDF activation, run the standard `export.bat`/`install.ps1` first.
 - Flash: `python flash.py -p COMXX` (default COM13). If COM port is busy, close all monitors/esptool or replug USB (sometimes Windows requires a reboot to release the port).
 - OTA: run `python -m http.server 8080` from repo root (or `ota_server.bat`); set URL to `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin`, then trigger OTA via MQTT (`esp32p4/ota_url_input/set`, `esp32p4/ota_trigger/set = ON`) or HA button.
+- If build fails with "Cannot find component list file", run `idf.py reconfigure` (after `export.bat`) then rebuild.
 
 Runtime Tips
 ------------
