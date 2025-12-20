@@ -4,11 +4,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/timers.h"
 #include "esp_err.h"
 #include "esp_check.h"
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include "audio_capture.h"
 #include "ha_client.h"
@@ -53,6 +55,14 @@ static bool is_pipeline_active = false;
 static bool wake_detect_pending = false;
 static bool followup_vad_pending = false;
 static bool music_paused_for_tts = false;
+static bool suppress_tts_audio = false;
+static bool timer_local_handled = false;
+static TimerHandle_t local_timer_handle = NULL;
+static uint32_t local_timer_seconds = 0;
+static uint32_t pending_timer_seconds = 0;
+static bool pending_timer_valid = false;
+static char last_stt_text[128];
+static bool timer_started_from_stt = false;
 
 static char *current_pipeline_handler = NULL;
 static int warmup_chunks_skip = 0;
@@ -74,12 +84,28 @@ static void on_wake_word_detected(const int16_t *audio_data, size_t samples);
 static void on_offline_cmd_detected(int id, int index);
 static void vad_event_handler(audio_capture_vad_event_t event);
 static void audio_capture_handler(const uint8_t *audio_data, size_t length);
+static void stt_text_handler(const char *text, const char *conversation_id);
 static void intent_handler(const char *intent_name, const char *intent_data, const char *conversation_id);
 static void conversation_response_handler(const char *response_text, const char *conversation_id);
 static esp_err_t start_audio_streaming(uint32_t max_recording_ms, const char *context_tag);
 static void tts_audio_handler(const uint8_t *audio_data, size_t length);
 static void on_tts_complete(void);
 static void restart_task(void *arg);
+static void handle_local_music_play(void);
+static bool response_requests_music_selection(const char *response_text);
+static bool ascii_substr_case_insensitive(const char *haystack, const char *needle);
+static int ascii_tolower_int(int c);
+static void local_timer_callback(TimerHandle_t timer);
+static void local_timer_start(uint32_t seconds);
+static void local_timer_stop(void);
+static bool parse_timer_seconds_from_intent(const char *intent_data, uint32_t *out_seconds);
+static bool parse_duration_string_seconds(const char *text, uint32_t *out_seconds);
+static bool parse_iso8601_duration_seconds(const char *text, uint32_t *out_seconds);
+static bool parse_number_from_json_value(const cJSON *value, double *out);
+static bool parse_timer_seconds_from_text(const char *text, uint32_t *out_seconds);
+static bool response_indicates_timer_not_supported(const char *response_text);
+static int parse_cro_number_word(const char *word);
+static bool is_timer_keyword(const char *word);
 
 // Helper to post commands
 static void pipeline_post_cmd(pipeline_cmd_type_t type, int data) {
@@ -108,6 +134,7 @@ esp_err_t voice_pipeline_init(void) {
     // Register HA callbacks
     ha_client_register_intent_callback(intent_handler);
     ha_client_register_conversation_callback(conversation_response_handler);
+    ha_client_register_stt_callback(stt_text_handler);
 
     // Register TTS callback
     tts_player_init();
@@ -333,6 +360,10 @@ static void pipeline_task(void *arg) {
 static void on_wake_word_detected(const int16_t *audio_data, size_t samples) {
     if (wake_detect_pending) return;
     wake_detect_pending = true;
+    timer_local_handled = false;
+    suppress_tts_audio = false;
+    pending_timer_valid = false;
+    timer_started_from_stt = false;
     led_status_set(LED_STATUS_LISTENING);
     if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SLUŠAM...");
     pipeline_post_cmd(PIPELINE_CMD_WAKE_DETECTED, 0);
@@ -379,6 +410,30 @@ static void audio_capture_handler(const uint8_t *audio_data, size_t length) {
     }
 }
 
+static void stt_text_handler(const char *text, const char *conversation_id) {
+    (void)conversation_id;
+
+    if (!text) {
+        return;
+    }
+
+    strncpy(last_stt_text, text, sizeof(last_stt_text) - 1);
+    last_stt_text[sizeof(last_stt_text) - 1] = '\0';
+
+    pending_timer_valid = parse_timer_seconds_from_text(last_stt_text, &pending_timer_seconds);
+    if (pending_timer_valid) {
+        ESP_LOGI(TAG, "STT timer candidate: %u seconds", pending_timer_seconds);
+        local_timer_start(pending_timer_seconds);
+        timer_local_handled = true;
+        timer_started_from_stt = true;
+        pending_timer_valid = false;
+        suppress_tts_audio = true;
+        followup_vad_pending = false;
+        pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
+        pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+    }
+}
+
 static esp_err_t start_audio_streaming(uint32_t max_recording_ms, const char *context_tag) {
     // If HA not connected, we still record for VAD, but maybe don't stream?
     // audio_capture_handler handles the check.
@@ -408,6 +463,14 @@ static void on_tts_complete(void) {
 }
 
 static void tts_audio_handler(const uint8_t *audio_data, size_t length) {
+    if (suppress_tts_audio) {
+        if (audio_data == NULL || length == 0) {
+            suppress_tts_audio = false;
+            on_tts_complete();
+        }
+        return;
+    }
+
     if (local_music_player_is_initialized() && local_music_player_get_state() == MUSIC_STATE_PLAYING) {
         local_music_player_pause();
         music_paused_for_tts = true;
@@ -422,6 +485,42 @@ static void tts_audio_handler(const uint8_t *audio_data, size_t length) {
 }
 
 static void conversation_response_handler(const char *response_text, const char *conversation_id) {
+    if (pending_timer_valid && response_indicates_timer_not_supported(response_text)) {
+        local_timer_start(pending_timer_seconds);
+        timer_local_handled = true;
+        pending_timer_valid = false;
+        suppress_tts_audio = true;
+        followup_vad_pending = false;
+        pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
+        pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+        return;
+    }
+
+    if (timer_local_handled) {
+        timer_local_handled = false;
+        suppress_tts_audio = true;
+        followup_vad_pending = false;
+        if (mqtt_ha_is_connected()) {
+            mqtt_ha_update_sensor("va_response", local_timer_seconds > 0 ? "TIMER POSTAVLJEN" : "TIMER");
+            mqtt_ha_update_sensor("va_status", "SPREMAN");
+        }
+        pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+        return;
+    }
+
+    bool local_music_ready = local_music_player_is_initialized();
+    if (local_music_ready && response_requests_music_selection(response_text)) {
+        ESP_LOGI(TAG, "HA asked for music selection; playing local SD music");
+        suppress_tts_audio = true;
+        followup_vad_pending = false;
+        handle_local_music_play();
+        if (mqtt_ha_is_connected()) {
+            mqtt_ha_update_sensor("va_response", "PUSTAM GLAZBU");
+            mqtt_ha_update_sensor("va_status", "GLAZBA...");
+        }
+        return;
+    }
+
     if (response_text && response_text[strlen(response_text)-1] == '?') {
         followup_vad_pending = true;
     } else {
@@ -439,10 +538,508 @@ static void conversation_response_handler(const char *response_text, const char 
 }
 
 static void intent_handler(const char *intent_name, const char *intent_data, const char *conversation_id) {
-    if (strstr(intent_name, "timer") || strstr(intent_name, "Timer")) {
-         ESP_LOGI(TAG, "Timer intent detected locally");
-         pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
+    (void)conversation_id;
+
+    if (!intent_name) {
+        return;
     }
+
+    ESP_LOGI(TAG, "HA intent: %s", intent_name);
+
+    if (strstr(intent_name, "Timer") || strstr(intent_name, "timer")) {
+        if (timer_started_from_stt &&
+            strcmp(intent_name, "HassTimerCancel") != 0 &&
+            strcmp(intent_name, "HassTimerStop") != 0) {
+            return;
+        }
+        uint32_t seconds = 0;
+        if (parse_timer_seconds_from_intent(intent_data, &seconds) && seconds > 0) {
+            local_timer_start(seconds);
+        } else if (pending_timer_valid && pending_timer_seconds > 0) {
+            local_timer_start(pending_timer_seconds);
+            pending_timer_valid = false;
+        } else if (strcmp(intent_name, "HassTimerCancel") == 0 ||
+                   strcmp(intent_name, "HassTimerStop") == 0) {
+            local_timer_stop();
+            timer_started_from_stt = false;
+        } else {
+            ESP_LOGW(TAG, "Timer intent missing duration");
+        }
+        timer_local_handled = true;
+        suppress_tts_audio = true;
+        pending_timer_valid = false;
+        followup_vad_pending = false;
+        pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
+        pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+        return;
+    }
+
+    if (strcmp(intent_name, "HassMediaNext") == 0) {
+        if (local_music_player_is_initialized()) local_music_player_next();
+        suppress_tts_audio = true;
+        return;
+    }
+    if (strcmp(intent_name, "HassMediaPrevious") == 0) {
+        if (local_music_player_is_initialized()) local_music_player_previous();
+        suppress_tts_audio = true;
+        return;
+    }
+    if (strcmp(intent_name, "HassMediaStop") == 0) {
+        if (local_music_player_is_initialized()) local_music_player_stop();
+        suppress_tts_audio = true;
+        return;
+    }
+    if (strcmp(intent_name, "HassMediaPause") == 0) {
+        if (local_music_player_is_initialized()) local_music_player_pause();
+        suppress_tts_audio = true;
+        return;
+    }
+    if (strcmp(intent_name, "HassMediaPlayPause") == 0) {
+        if (local_music_player_is_initialized()) {
+            music_state_t state = local_music_player_get_state();
+            if (state == MUSIC_STATE_PLAYING) {
+                local_music_player_pause();
+            } else if (state == MUSIC_STATE_PAUSED) {
+                local_music_player_resume();
+            } else {
+                local_music_player_play();
+            }
+        }
+        suppress_tts_audio = true;
+        return;
+    }
+    if (strcmp(intent_name, "HassMediaPlay") == 0 || strcmp(intent_name, "HassMediaUnpause") == 0) {
+        handle_local_music_play();
+        suppress_tts_audio = true;
+        return;
+    }
+
+    if (strstr(intent_name, "timer") || strstr(intent_name, "Timer")) {
+        ESP_LOGI(TAG, "Timer intent detected locally");
+        pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
+    }
+}
+
+static void handle_local_music_play(void) {
+    if (!local_music_player_is_initialized()) {
+        ESP_LOGW(TAG, "Local music player not initialized");
+        return;
+    }
+
+    music_state_t state = local_music_player_get_state();
+    if (state == MUSIC_STATE_PAUSED) {
+        local_music_player_resume();
+    } else if (state != MUSIC_STATE_PLAYING) {
+        local_music_player_play();
+    }
+}
+
+static void local_timer_callback(TimerHandle_t timer) {
+    (void)timer;
+    local_timer_seconds = 0;
+    pipeline_post_cmd(PIPELINE_CMD_TIMER_BEEP, 0);
+}
+
+static void local_timer_start(uint32_t seconds) {
+    if (seconds == 0) {
+        return;
+    }
+
+    local_timer_seconds = seconds;
+
+    if (local_timer_handle == NULL) {
+        local_timer_handle = xTimerCreate("va_timer", pdMS_TO_TICKS(1000), pdFALSE, NULL, local_timer_callback);
+        if (local_timer_handle == NULL) {
+            ESP_LOGE(TAG, "Failed to create local timer");
+            return;
+        }
+    }
+
+    uint64_t duration_ms = (uint64_t)seconds * 1000ULL;
+    if (duration_ms > UINT32_MAX) {
+        duration_ms = UINT32_MAX;
+    }
+
+    xTimerStop(local_timer_handle, 0);
+    xTimerChangePeriod(local_timer_handle, pdMS_TO_TICKS((uint32_t)duration_ms), 0);
+    xTimerStart(local_timer_handle, 0);
+    ESP_LOGI(TAG, "Local timer set: %u seconds", seconds);
+}
+
+static void local_timer_stop(void) {
+    if (local_timer_handle == NULL) {
+        return;
+    }
+    xTimerStop(local_timer_handle, 0);
+    local_timer_seconds = 0;
+    ESP_LOGI(TAG, "Local timer stopped");
+}
+
+static bool parse_timer_seconds_from_intent(const char *intent_data, uint32_t *out_seconds) {
+    if (!intent_data || !out_seconds) {
+        return false;
+    }
+
+    cJSON *root = cJSON_Parse(intent_data);
+    if (!root) {
+        return false;
+    }
+
+    uint32_t total_seconds = 0;
+    const cJSON *slots = cJSON_GetObjectItemCaseSensitive(root, "slots");
+
+    if (slots && cJSON_IsObject(slots)) {
+        const cJSON *slot = NULL;
+        for (slot = slots->child; slot != NULL; slot = slot->next) {
+            const char *name = slot->string;
+            if (!name) continue;
+
+            const cJSON *value = cJSON_GetObjectItemCaseSensitive((cJSON *)slot, "value");
+            if (!value) value = slot;
+
+            if (strcmp(name, "hours") == 0 || strcmp(name, "hour") == 0) {
+                double v = 0;
+                if (parse_number_from_json_value(value, &v) && v > 0) {
+                    total_seconds += (uint32_t)(v * 3600.0);
+                }
+            } else if (strcmp(name, "minutes") == 0 || strcmp(name, "minute") == 0) {
+                double v = 0;
+                if (parse_number_from_json_value(value, &v) && v > 0) {
+                    total_seconds += (uint32_t)(v * 60.0);
+                }
+            } else if (strcmp(name, "seconds") == 0 || strcmp(name, "second") == 0) {
+                double v = 0;
+                if (parse_number_from_json_value(value, &v) && v > 0) {
+                    total_seconds += (uint32_t)(v);
+                }
+            } else if (strcmp(name, "duration") == 0) {
+                if (cJSON_IsString(value) && value->valuestring) {
+                    uint32_t parsed = 0;
+                    if (parse_duration_string_seconds(value->valuestring, &parsed) && parsed > 0) {
+                        total_seconds += parsed;
+                    }
+                } else if (cJSON_IsObject(value)) {
+                    const cJSON *sec = cJSON_GetObjectItemCaseSensitive((cJSON *)value, "seconds");
+                    const cJSON *min = cJSON_GetObjectItemCaseSensitive((cJSON *)value, "minutes");
+                    const cJSON *hr = cJSON_GetObjectItemCaseSensitive((cJSON *)value, "hours");
+                    double v = 0;
+                    if (parse_number_from_json_value(hr, &v) && v > 0) total_seconds += (uint32_t)(v * 3600.0);
+                    if (parse_number_from_json_value(min, &v) && v > 0) total_seconds += (uint32_t)(v * 60.0);
+                    if (parse_number_from_json_value(sec, &v) && v > 0) total_seconds += (uint32_t)v;
+                }
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+
+    if (total_seconds == 0) {
+        return false;
+    }
+
+    *out_seconds = total_seconds;
+    return true;
+}
+
+static bool parse_duration_string_seconds(const char *text, uint32_t *out_seconds) {
+    if (!text || !out_seconds) {
+        return false;
+    }
+
+    if (parse_iso8601_duration_seconds(text, out_seconds)) {
+        return true;
+    }
+
+    int parts[3] = {0, 0, 0};
+    int count = 0;
+    const char *p = text;
+    while (*p && count < 3) {
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) break;
+        parts[count++] = (int)v;
+        if (*end == ':') {
+            p = end + 1;
+        } else {
+            p = end;
+            break;
+        }
+    }
+
+    if (count == 3) {
+        *out_seconds = (uint32_t)(parts[0] * 3600 + parts[1] * 60 + parts[2]);
+        return true;
+    }
+    if (count == 2) {
+        *out_seconds = (uint32_t)(parts[0] * 60 + parts[1]);
+        return true;
+    }
+    if (count == 1) {
+        *out_seconds = (uint32_t)parts[0];
+        return true;
+    }
+
+    return false;
+}
+
+static bool parse_iso8601_duration_seconds(const char *text, uint32_t *out_seconds) {
+    if (!text || !out_seconds) {
+        return false;
+    }
+
+    if (strncmp(text, "PT", 2) != 0) {
+        return false;
+    }
+
+    uint32_t total = 0;
+    const char *p = text + 2;
+    while (*p) {
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) return false;
+        if (*end == 'H') {
+            total += (uint32_t)(v * 3600);
+        } else if (*end == 'M') {
+            total += (uint32_t)(v * 60);
+        } else if (*end == 'S') {
+            total += (uint32_t)v;
+        } else {
+            return false;
+        }
+        p = end + 1;
+    }
+
+    if (total == 0) {
+        return false;
+    }
+
+    *out_seconds = total;
+    return true;
+}
+
+static bool parse_number_from_json_value(const cJSON *value, double *out) {
+    if (!value || !out) {
+        return false;
+    }
+    if (cJSON_IsNumber(value)) {
+        *out = value->valuedouble;
+        return true;
+    }
+    if (cJSON_IsString(value) && value->valuestring) {
+        char *end = NULL;
+        double v = strtod(value->valuestring, &end);
+        if (end != value->valuestring) {
+            *out = v;
+            return true;
+        }
+    }
+    if (cJSON_IsObject(value)) {
+        const cJSON *v_item = cJSON_GetObjectItemCaseSensitive((cJSON *)value, "value");
+        if (v_item) {
+            return parse_number_from_json_value(v_item, out);
+        }
+    }
+    return false;
+}
+
+static bool parse_timer_seconds_from_text(const char *text, uint32_t *out_seconds) {
+    if (!text || !out_seconds) {
+        return false;
+    }
+
+    bool has_timer = false;
+    uint32_t total_seconds = 0;
+    double pending = -1.0;
+    const char *p = text;
+
+    while (*p) {
+        while (*p && !isalnum((unsigned char)*p) && *p != ':' && *p != 'P' && *p != 'p') {
+            p++;
+        }
+        if (!*p) break;
+
+        char word[32];
+        size_t len = 0;
+        while (*p && (isalnum((unsigned char)*p) || *p == ':' || *p == '-')) {
+            if (len < sizeof(word) - 1) {
+                word[len++] = *p;
+            }
+            p++;
+        }
+        word[len] = '\0';
+
+        char lower[32];
+        for (size_t i = 0; i < len && i < sizeof(lower) - 1; i++) {
+            lower[i] = (char)ascii_tolower_int((unsigned char)word[i]);
+        }
+        lower[len < sizeof(lower) - 1 ? len : sizeof(lower) - 1] = '\0';
+
+        if (is_timer_keyword(lower)) {
+            has_timer = true;
+            continue;
+        }
+
+        if (strcmp(lower, "pola") == 0) {
+            pending = 0.5;
+            continue;
+        }
+
+        if (strchr(lower, ':') || (lower[0] == 'p' && lower[1] == 't')) {
+            uint32_t parsed = 0;
+            if (parse_duration_string_seconds(lower, &parsed) && parsed > 0) {
+                total_seconds += parsed;
+                pending = -1.0;
+            }
+            continue;
+        }
+
+        int word_num = parse_cro_number_word(lower);
+        if (word_num >= 0) {
+            pending = (double)word_num;
+            continue;
+        }
+
+        char *end = NULL;
+        double v = strtod(lower, &end);
+        if (end != lower && *end == '\0') {
+            pending = v;
+            continue;
+        }
+
+        if (pending > 0) {
+            if (strcmp(lower, "sat") == 0 || strcmp(lower, "sata") == 0 ||
+                strcmp(lower, "sati") == 0 || strcmp(lower, "satova") == 0) {
+                total_seconds += (uint32_t)(pending * 3600.0);
+                pending = -1.0;
+            } else if (strcmp(lower, "min") == 0 || strcmp(lower, "minuta") == 0 ||
+                       strcmp(lower, "minute") == 0 || strcmp(lower, "minutu") == 0 ||
+                       strcmp(lower, "minut") == 0) {
+                total_seconds += (uint32_t)(pending * 60.0);
+                pending = -1.0;
+            } else if (strcmp(lower, "sek") == 0 || strcmp(lower, "sekunda") == 0 ||
+                       strcmp(lower, "sekundi") == 0 || strcmp(lower, "sekunde") == 0 ||
+                       strcmp(lower, "sekundu") == 0) {
+                total_seconds += (uint32_t)(pending);
+                pending = -1.0;
+            }
+        }
+    }
+
+    if (total_seconds == 0 || !has_timer) {
+        return false;
+    }
+
+    *out_seconds = total_seconds;
+    return true;
+}
+
+static bool response_indicates_timer_not_supported(const char *response_text) {
+    if (!response_text || response_text[0] == '\0') {
+        return false;
+    }
+
+    if (ascii_substr_case_insensitive(response_text, "ne mogu postavljati timere")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "ne mogu postaviti timer")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "ne mogu postavljati timer")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "ne mogu namjestati timer")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "ne mogu namjestiti timer")) {
+        return true;
+    }
+
+    return false;
+}
+
+static int parse_cro_number_word(const char *word) {
+    if (!word) return -1;
+
+    if (strcmp(word, "nula") == 0) return 0;
+    if (strcmp(word, "jedan") == 0 || strcmp(word, "jedna") == 0 || strcmp(word, "jednu") == 0) return 1;
+    if (strcmp(word, "dva") == 0 || strcmp(word, "dvije") == 0) return 2;
+    if (strcmp(word, "tri") == 0) return 3;
+    if (strcmp(word, "cetiri") == 0) return 4;
+    if (strcmp(word, "pet") == 0) return 5;
+    if (strcmp(word, "sest") == 0) return 6;
+    if (strcmp(word, "sedam") == 0) return 7;
+    if (strcmp(word, "osam") == 0) return 8;
+    if (strcmp(word, "devet") == 0) return 9;
+    if (strcmp(word, "deset") == 0) return 10;
+    if (strcmp(word, "jedanaest") == 0) return 11;
+    if (strcmp(word, "dvanaest") == 0) return 12;
+
+    return -1;
+}
+
+static bool is_timer_keyword(const char *word) {
+    if (!word) return false;
+    if (strcmp(word, "timer") == 0 || strcmp(word, "tajmer") == 0) return true;
+    if (strcmp(word, "odbrojavanje") == 0 || strcmp(word, "odbroj") == 0) return true;
+    return false;
+}
+static bool response_requests_music_selection(const char *response_text) {
+    if (!response_text || response_text[0] == '\0') {
+        return false;
+    }
+
+    if (ascii_substr_case_insensitive(response_text, "koju glazbu")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "koju pjesmu")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "sto zelis slusati")) {
+        return true;
+    }
+    if (ascii_substr_case_insensitive(response_text, "sto zelite slusati")) {
+        return true;
+    }
+
+    return false;
+}
+
+static bool ascii_substr_case_insensitive(const char *haystack, const char *needle) {
+    if (!haystack || !needle) {
+        return false;
+    }
+
+    size_t nlen = strlen(needle);
+    if (nlen == 0) {
+        return true;
+    }
+
+    for (const char *p = haystack; *p; p++) {
+        if (ascii_tolower_int((unsigned char)*p) == ascii_tolower_int((unsigned char)needle[0])) {
+            size_t i = 1;
+            for (; i < nlen; i++) {
+                char hc = p[i];
+                if (hc == '\0') {
+                    break;
+                }
+                if (ascii_tolower_int((unsigned char)hc) != ascii_tolower_int((unsigned char)needle[i])) {
+                    break;
+                }
+            }
+            if (i == nlen) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static int ascii_tolower_int(int c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c + ('a' - 'A');
+    }
+    return c;
 }
 
 static void restart_task(void *arg) {

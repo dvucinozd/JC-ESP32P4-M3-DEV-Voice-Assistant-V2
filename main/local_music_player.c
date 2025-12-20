@@ -322,6 +322,13 @@ esp_err_t local_music_player_resume(void)
     // Clear manual stop flag - user pressed resume
     manual_stop = false;
 
+    // Ensure codec is back to music playback settings (TTS/WWD may have changed it)
+    ESP_LOGI(TAG, "Configuring codec for music playback (48kHz stereo)");
+    esp_err_t codec_ret = bsp_extra_codec_set_fs(48000, 16, I2S_SLOT_MODE_STEREO);
+    if (codec_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to reconfigure codec");
+    }
+
     // Use audio player resume (queues resume request)
     esp_err_t ret = audio_player_resume();
     if (ret != ESP_OK) {

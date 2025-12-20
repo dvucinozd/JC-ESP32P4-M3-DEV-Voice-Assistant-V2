@@ -65,7 +65,9 @@ def main() -> int:
         return 2
 
     src = read_config_h(config_h)
-    hostname = parse_define_string(src, "HA_HOSTNAME")
+    hostname = parse_define_string(src, "HA_HOST")
+    if not hostname:
+        hostname = parse_define_string(src, "HA_HOSTNAME")
     token = parse_define_string(src, "HA_TOKEN")
     port = parse_define_int(src, "HA_PORT")
     use_ssl = parse_define_bool(src, "HA_USE_SSL")

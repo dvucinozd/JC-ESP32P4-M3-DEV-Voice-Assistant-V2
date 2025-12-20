@@ -130,6 +130,14 @@ typedef void (*ha_pipeline_error_callback_t)(const char *error_code, const char 
 typedef void (*ha_intent_callback_t)(const char *intent_name, const char *intent_data, const char *conversation_id);
 
 /**
+ * @brief Callback for STT text output
+ *
+ * @param text Recognized text from STT
+ * @param conversation_id Associated conversation ID
+ */
+typedef void (*ha_stt_callback_t)(const char *text, const char *conversation_id);
+
+/**
  * @brief Register callback for conversation responses
  *
  * @param callback Function to call when HA sends conversation response
@@ -156,6 +164,13 @@ void ha_client_register_error_callback(ha_pipeline_error_callback_t callback);
  * @param callback Function to call when intent is recognized
  */
 void ha_client_register_intent_callback(ha_intent_callback_t callback);
+
+/**
+ * @brief Register callback for STT output text
+ *
+ * @param callback Function to call when STT text is available
+ */
+void ha_client_register_stt_callback(ha_stt_callback_t callback);
 
 /**
  * @brief Stop Home Assistant client and disconnect

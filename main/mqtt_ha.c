@@ -41,6 +41,31 @@ static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_connected = false;
 static mqtt_entity_t entities[MAX_ENTITIES];
 static int entity_count = 0;
+static bool legacy_cleanup_done = false;
+
+#define LEGACY_DISCOVERY_COUNT 2
+static const char *legacy_discovery_topics[LEGACY_DISCOVERY_COUNT] = {
+    "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_vad_silence_duration/config",
+    "homeassistant/number/esp32p4_voice_assistant/esp32_p4_voice_assistant_vad_max_recording_duration/config"
+};
+
+static void mqtt_ha_cleanup_legacy_discovery(void) {
+  if (!mqtt_client || legacy_cleanup_done) {
+    return;
+  }
+
+  for (int i = 0; i < LEGACY_DISCOVERY_COUNT; i++) {
+    int msg_id = esp_mqtt_client_publish(mqtt_client, legacy_discovery_topics[i],
+                                         "", 0, 1, 1 /* retain */);
+    if (msg_id >= 0) {
+      ESP_LOGI(TAG, "Cleared legacy discovery: %s", legacy_discovery_topics[i]);
+    } else {
+      ESP_LOGW(TAG, "Failed to clear legacy discovery: %s", legacy_discovery_topics[i]);
+    }
+  }
+
+  legacy_cleanup_done = true;
+}
 
 static int find_entity_index(const char *entity_id) {
   for (int i = 0; i < entity_count; i++) {
@@ -177,6 +202,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(TAG, "MQTT connected to Home Assistant");
     mqtt_connected = true;
+
+    mqtt_ha_cleanup_legacy_discovery();
 
     // Republish discovery for all entities (handles boot-time race where
     // entities were registered before MQTT connected).

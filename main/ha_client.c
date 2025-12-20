@@ -38,6 +38,7 @@ static ha_conversation_callback_t conversation_callback = NULL;
 static ha_tts_audio_callback_t tts_audio_callback = NULL;
 static ha_pipeline_error_callback_t error_callback = NULL;
 static ha_intent_callback_t intent_callback = NULL;
+static ha_stt_callback_t stt_callback = NULL;
 
 static int stt_binary_handler_id = -1;
 static int last_run_message_id = -1;
@@ -60,6 +61,9 @@ static void download_tts_audio(const char *url);
 static bool ha_find_stt_handler_id(const cJSON *node, int depth, int *out_id);
 static void ha_clear_audio_ready(void);
 static void ha_set_audio_ready(int handler_id, const char *source);
+static const char *ha_extract_intent_json(const cJSON *data_obj);
+static bool ha_intent_name_is_timer(const char *intent_name);
+static const char *ha_extract_stt_text(const cJSON *data_obj);
 
 static void trim_ascii_whitespace_inplace(char *s) {
   if (s == NULL) return;
@@ -131,6 +135,58 @@ static bool ha_find_stt_handler_id(const cJSON *node, int depth, int *out_id) {
     }
   }
   return false;
+}
+
+static const char *ha_extract_intent_json(const cJSON *data_obj) {
+  static char intent_buf[512];
+  const cJSON *intent = NULL;
+  const cJSON *intent_output = NULL;
+
+  if (!data_obj) return NULL;
+
+  intent = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "intent");
+  if (!intent) {
+    intent_output = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "intent_output");
+    if (intent_output) {
+      intent = cJSON_GetObjectItemCaseSensitive((cJSON *)intent_output, "intent");
+    }
+  }
+  if (!intent) return NULL;
+
+  char *intent_str = cJSON_PrintUnformatted((cJSON *)intent);
+  if (!intent_str) return NULL;
+
+  size_t len = strlen(intent_str);
+  if (len >= sizeof(intent_buf)) len = sizeof(intent_buf) - 1;
+  memcpy(intent_buf, intent_str, len);
+  intent_buf[len] = '\0';
+  free(intent_str);
+  return intent_buf;
+}
+
+static bool ha_intent_name_is_timer(const char *intent_name) {
+  if (!intent_name) return false;
+  return (strstr(intent_name, "timer") || strstr(intent_name, "Timer"));
+}
+
+static const char *ha_extract_stt_text(const cJSON *data_obj) {
+  const cJSON *stt_out = NULL;
+  const cJSON *text = NULL;
+
+  if (!data_obj) return NULL;
+
+  stt_out = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "stt_output");
+  if (!stt_out) {
+    stt_out = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "stt");
+  }
+  if (!stt_out) return NULL;
+
+  text = cJSON_GetObjectItemCaseSensitive((cJSON *)stt_out, "text");
+  if (text && cJSON_IsString(text) && text->valuestring && text->valuestring[0] != '\0') {
+    return text->valuestring;
+  }
+
+  return NULL;
 }
 
 static void ha_clear_audio_ready(void) {
@@ -210,10 +266,41 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
                         ha_set_audio_ready(hid, "run-start");
                     }
                 } else if (strcmp(evt_type->valuestring, "intent-end") == 0) {
+                    const cJSON *intent = NULL;
+                    const cJSON *intent_output = NULL;
+                    const cJSON *intent_name = NULL;
+                    const char *intent_data = NULL;
+
+                    if (data_obj) {
+                        intent = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "intent");
+                        if (!intent) {
+                            intent_output = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "intent_output");
+                            if (intent_output) {
+                                intent = cJSON_GetObjectItemCaseSensitive((cJSON *)intent_output, "intent");
+                            }
+                        }
+                        if (intent) {
+                            intent_name = cJSON_GetObjectItemCaseSensitive((cJSON *)intent, "name");
+                        }
+                        intent_data = ha_extract_intent_json(data_obj);
+                    }
+
+                    if (intent_name && cJSON_IsString(intent_name) && intent_name->valuestring && intent_callback) {
+                        if (ha_intent_name_is_timer(intent_name->valuestring)) {
+                            timer_started_this_conversation = true;
+                        }
+                        intent_callback(intent_name->valuestring, intent_data, NULL);
+                    }
+
                     const char *speech = ha_extract_response_speech_plain_speech(data_obj);
                     if (speech && conversation_callback) {
                         conversation_callback(speech, NULL);
                         speech_text_sent_this_run = true;
+                    }
+                } else if (strcmp(evt_type->valuestring, "stt-end") == 0) {
+                    const char *stt_text = ha_extract_stt_text(data_obj);
+                    if (stt_text && stt_callback) {
+                        stt_callback(stt_text, NULL);
                     }
                 } else if (strcmp(evt_type->valuestring, "tts-end") == 0) {
                     if (timer_started_this_conversation) {
@@ -444,6 +531,7 @@ void ha_client_register_conversation_callback(ha_conversation_callback_t cb) { c
 void ha_client_register_tts_audio_callback(ha_tts_audio_callback_t cb) { tts_audio_callback = cb; }
 void ha_client_register_error_callback(ha_pipeline_error_callback_t cb) { error_callback = cb; }
 void ha_client_register_intent_callback(ha_intent_callback_t cb) { intent_callback = cb; }
+void ha_client_register_stt_callback(ha_stt_callback_t cb) { stt_callback = cb; }
 
 void ha_client_stop(void) {
     if (ws_client) {

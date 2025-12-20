@@ -7,6 +7,7 @@ Firmware za **JC-ESP32P4-M3-DEV** koji pretvara ESP32‑P4 u lokalni glasovni as
 - Offline wake word (WakeNet9) na 16 kHz mono audio streamu (runtime podesiv prag).
 - HA Assist pipeline preko WebSocket: STT/intent/TTS eventi, streaming audio u oba smjera.
 - Lokalni MP3 player sa SD kartice + integracija sa voice pipeline (pauziranje/gašenje WWD tijekom glazbe).
+- Lokalni timer fallback (start iz STT teksta) radi i kad HA ne podrzava timere.
 - MQTT Home Assistant Discovery: senzori, prekidači i kontrole (LED, OTA, glasnoća, glazba).
 - OTA update: URL ulaz + okidač iz Home Assistanta (MQTT) + LED status tijekom OTA.
 - Safe Mode (boot‑loop zaštita) + watchdog + dijagnostika reset razloga.
