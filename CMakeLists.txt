@@ -7,5 +7,5 @@ set(EXTRA_COMPONENT_DIRS
     )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-set(PROJECT_VER "P4-HA-VA-0.0.7")
+set(PROJECT_VER "P4-HA-VA-0.0.8")
 project(esp32_p4_voice_assistant)

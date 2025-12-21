@@ -28,9 +28,11 @@ static const char *TAG = "webserial";
 static httpd_handle_t server = NULL;
 static bool server_running = false;
 
-#define LOG_BUFFER_SIZE 4096
+#define LOG_BUFFER_SIZE 8192
 static char log_buffer[LOG_BUFFER_SIZE];
 static size_t log_buffer_pos = 0;
+static uint32_t log_seq = 0;
+static uint32_t log_base_seq = 0;
 static SemaphoreHandle_t log_mutex = NULL;
 static vprintf_like_t original_log_func = NULL;
 static int client_count = 0;
@@ -55,7 +57,32 @@ static const char *dashboard_html =
     "fetchStatus();setInterval(fetchStatus, 5000);"
     "</script></body></html>";
 
-static const char *webserial_html = "<html><body><h2>System Logs</h2><button onclick='location.reload()'>Refresh</button> <a href='/'><button>Back to Dashboard</button></a><hr><pre id='c'></pre><script>fetch('/webserial/logs').then(r=>r.text()).then(t=>document.getElementById('c').innerText=t)</script></body></html>";
+static const char *webserial_html =
+    "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<style>body{font-family:sans-serif;margin:16px}button{padding:8px 14px;margin:4px}</style>"
+    "</head><body><h2>System Logs</h2>"
+    "<button onclick='location.reload()'>Refresh</button>"
+    "<button onclick='clearLogs()'>Clear</button>"
+    " <a href='/'><button>Back to Dashboard</button></a><hr>"
+    "<pre id='c' style='height:70vh;overflow:auto;border:1px solid #ddd;padding:8px'></pre>"
+    "<script>"
+    "const logEl=document.getElementById('c');"
+    "let lastSeq=0;"
+    "function poll(){"
+    "fetch('/webserial/logs?since='+lastSeq,{cache:'no-store'}).then(r=>{"
+    "const reset=r.headers.get('X-Log-Reset')==='1';"
+    "const seq=parseInt(r.headers.get('X-Log-Seq')||'0');"
+    "return r.text().then(t=>{"
+    "if(reset){logEl.innerText=t;}else{logEl.innerText+=t;}"
+    "if(logEl.innerText.length>20000){logEl.innerText=logEl.innerText.slice(-20000);}"
+    "logEl.scrollTop=logEl.scrollHeight;"
+    "if(seq>0){lastSeq=seq;}"
+    "});"
+    "});"
+    "}"
+    "function clearLogs(){fetch('/webserial/clear').then(()=>{logEl.innerText='';lastSeq=0;});}"
+    "poll();setInterval(poll,1000);"
+    "</script></body></html>";
 
 static int webserial_log_func(const char *fmt, va_list args) {
     int ret = 0;
@@ -67,12 +94,27 @@ static int webserial_log_func(const char *fmt, va_list args) {
     }
     char message[256];
     int len = vsnprintf(message, sizeof(message), fmt, args);
-    if (len > 0 && len < sizeof(message)) {
+    if (len > 0) {
+        if (len >= (int)sizeof(message)) {
+            len = sizeof(message) - 1;
+            message[len] = '\0';
+        }
         if (log_mutex && xSemaphoreTake(log_mutex, 0)) {
-            if (log_buffer_pos + len >= LOG_BUFFER_SIZE) log_buffer_pos = 0;
+            if (log_buffer_pos + len >= LOG_BUFFER_SIZE) {
+                size_t overflow = log_buffer_pos + len - (LOG_BUFFER_SIZE - 1);
+                if (overflow > log_buffer_pos) {
+                    overflow = log_buffer_pos;
+                }
+                if (overflow > 0 && overflow < log_buffer_pos) {
+                    memmove(log_buffer, log_buffer + overflow, log_buffer_pos - overflow);
+                }
+                log_buffer_pos -= overflow;
+                log_base_seq += (uint32_t)overflow;
+            }
             memcpy(log_buffer + log_buffer_pos, message, len);
-            log_buffer_pos += len;
-            log_buffer[log_buffer_pos] = 0;
+            log_buffer_pos += (size_t)len;
+            log_buffer[log_buffer_pos] = '\0';
+            log_seq += (uint32_t)len;
             xSemaphoreGive(log_mutex);
         }
     }
@@ -81,10 +123,75 @@ static int webserial_log_func(const char *fmt, va_list args) {
 
 static esp_err_t logs_handler(httpd_req_t *req) {
     client_count++;
+    char query[64] = {0};
+    char since_str[16] = {0};
+    uint32_t since = 0;
+    bool have_since = false;
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        if (httpd_query_key_value(query, "since", since_str, sizeof(since_str)) == ESP_OK) {
+            since = (uint32_t)strtoul(since_str, NULL, 10);
+            have_since = true;
+        }
+    }
+
+    char *payload = NULL;
+    size_t payload_len = 0;
+    bool reset = false;
+    uint32_t seq = 0;
+    uint32_t base = 0;
+
     if (log_mutex && xSemaphoreTake(log_mutex, portMAX_DELAY)) {
-        httpd_resp_set_type(req, "text/plain");
-        httpd_resp_send(req, log_buffer, log_buffer_pos);
+        seq = log_seq;
+        base = log_base_seq;
+
+        if (!have_since) {
+            payload_len = log_buffer_pos;
+            payload = (char *)malloc(payload_len + 1);
+            if (payload) {
+                memcpy(payload, log_buffer, payload_len);
+                payload[payload_len] = '\0';
+            }
+        } else {
+            if (since < base) {
+                reset = true;
+                payload_len = log_buffer_pos;
+                payload = (char *)malloc(payload_len + 1);
+                if (payload) {
+                    memcpy(payload, log_buffer, payload_len);
+                    payload[payload_len] = '\0';
+                }
+            } else if (since <= seq) {
+                size_t offset = (size_t)(since - base);
+                if (offset > log_buffer_pos) {
+                    offset = log_buffer_pos;
+                }
+                payload_len = log_buffer_pos - offset;
+                payload = (char *)malloc(payload_len + 1);
+                if (payload) {
+                    memcpy(payload, log_buffer + offset, payload_len);
+                    payload[payload_len] = '\0';
+                }
+            }
+        }
         xSemaphoreGive(log_mutex);
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    char header[16];
+    snprintf(header, sizeof(header), "%u", seq);
+    httpd_resp_set_hdr(req, "X-Log-Seq", header);
+    snprintf(header, sizeof(header), "%u", base);
+    httpd_resp_set_hdr(req, "X-Log-Base", header);
+    if (reset) {
+        httpd_resp_set_hdr(req, "X-Log-Reset", "1");
+    }
+
+    if (payload) {
+        httpd_resp_send(req, payload, payload_len);
+        free(payload);
+    } else {
+        httpd_resp_send(req, "", 0);
     }
     return ESP_OK;
 }
@@ -93,6 +200,7 @@ static esp_err_t clear_handler(httpd_req_t *req) {
     if (log_mutex && xSemaphoreTake(log_mutex, portMAX_DELAY)) {
         log_buffer_pos = 0;
         log_buffer[0] = 0;
+        log_base_seq = log_seq;
         xSemaphoreGive(log_mutex);
     }
     httpd_resp_send(req, "OK", 2);
