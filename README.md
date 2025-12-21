@@ -94,3 +94,4 @@ Detaljan popis tehnologija/komponenti je u `TECHNICAL_SPECIFICATIONS.md`.
 ## Licence / Zasluge
 
 - ESP‑IDF / ESP‑SR / Home Assistant
+- Licenca: Apache-2.0 (vidi `LICENSE`)

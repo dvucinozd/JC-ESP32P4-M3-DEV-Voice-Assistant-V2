@@ -37,6 +37,10 @@ sdkconfig.backup
 
 # Credentials (IMPORTANT: Never commit!)
 main/config.h
+esphome/secrets.yaml
+secrets.yaml
+.env
+.env.*
 
 # Windows specific
 nul
