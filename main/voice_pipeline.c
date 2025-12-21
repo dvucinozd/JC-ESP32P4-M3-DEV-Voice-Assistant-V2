@@ -16,6 +16,7 @@
 #include "ha_client.h"
 #include "tts_player.h"
 #include "led_status.h"
+#include "ota_update.h"
 #include "mqtt_ha.h"
 #include "local_music_player.h"
 #include "beep_tone.h"
@@ -109,6 +110,7 @@ static bool parse_timer_seconds_from_text(const char *text, uint32_t *out_second
 static bool response_indicates_timer_not_supported(const char *response_text);
 static int parse_cro_number_word(const char *word);
 static bool is_timer_keyword(const char *word);
+static void led_status_set_guarded(led_status_t status);
 
 // Helper to post commands
 static void pipeline_post_cmd(pipeline_cmd_type_t type, int data) {
@@ -116,6 +118,13 @@ static void pipeline_post_cmd(pipeline_cmd_type_t type, int data) {
         pipeline_cmd_t cmd = {.type = type, .data = data};
         xQueueSend(pipeline_cmd_queue, &cmd, 0);
     }
+}
+
+static void led_status_set_guarded(led_status_t status) {
+    if (ota_update_is_running()) {
+        return;
+    }
+    led_status_set(status);
 }
 
 // =============================================================================
@@ -255,11 +264,11 @@ static void pipeline_task(void *arg) {
                     switch (cmd.data) {
                         case 0: // Light On
                             ESP_LOGI(TAG, "Action: LIGHT ON");
-                            led_status_set(LED_STATUS_LISTENING);
+                            led_status_set_guarded(LED_STATUS_LISTENING);
                             break;
                         case 1: // Light Off
                             ESP_LOGI(TAG, "Action: LIGHT OFF");
-                            led_status_set(LED_STATUS_IDLE);
+                            led_status_set_guarded(LED_STATUS_IDLE);
                             break;
                         case 2: // Music Play
                             ESP_LOGI(TAG, "Action: MUSIC PLAY");
@@ -292,7 +301,7 @@ static void pipeline_task(void *arg) {
 
                     if (audio_capture_start_wake_word_mode(on_wake_word_detected) == ESP_OK) {
                         is_wwd_running = true;
-                        led_status_set(LED_STATUS_IDLE);
+                        led_status_set_guarded(LED_STATUS_IDLE);
                         oled_status_set_va_state(OLED_VA_IDLE);
                         if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SPREMAN");
                         ESP_LOGI(TAG, "WWD Resumed");
@@ -311,7 +320,7 @@ static void pipeline_task(void *arg) {
 
                 case PIPELINE_CMD_START_FOLLOWUP_VAD:
                     audio_capture_stop_wait(500);
-                    led_status_set(LED_STATUS_LISTENING);
+                    led_status_set_guarded(LED_STATUS_LISTENING);
                     oled_status_set_va_state(OLED_VA_LISTENING);
                     if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SLUSAM...");
                     
@@ -375,7 +384,7 @@ static void on_wake_word_detected(const int16_t *audio_data, size_t samples) {
     suppress_tts_audio = false;
     pending_timer_valid = false;
     timer_started_from_stt = false;
-    led_status_set(LED_STATUS_LISTENING);
+    led_status_set_guarded(LED_STATUS_LISTENING);
     oled_status_set_va_state(OLED_VA_LISTENING);
     oled_status_set_last_event("wake");
     if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "SLUŠAM...");
@@ -398,7 +407,7 @@ static void vad_event_handler(audio_capture_vad_event_t event) {
         
         if (ha_client_is_connected()) {
             ha_client_end_audio_stream();
-            led_status_set(LED_STATUS_PROCESSING);
+            led_status_set_guarded(LED_STATUS_PROCESSING);
             oled_status_set_va_state(OLED_VA_PROCESSING);
             oled_status_set_last_event("vad-end");
             if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "OBRAĐUJEM...");
