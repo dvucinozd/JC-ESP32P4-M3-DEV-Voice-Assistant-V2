@@ -1,92 +1,92 @@
-# Tehničke specifikacije (projekt)
+# Technical Specifications (Project)
 
-Ovaj dokument opisuje korištene tehnologije, protokole, komponente i arhitekturu firmware-a za **JC-ESP32P4-M3-DEV Voice Assistant**.
+This document describes the technologies, protocols, components, and firmware architecture for **JC-ESP32P4-M3-DEV Voice Assistant**.
 
-## Hardver
+## Hardware
 
 - Target board: `JC-ESP32P4-M3-DEV`
-- MCU: `ESP32-P4` (RISC‑V, PSRAM)
-- Wi‑Fi coprocessor: `ESP32‑C6` (ESP‑Hosted / WiFi Remote preko SDIO)
+- MCU: `ESP32-P4` (RISC-V, PSRAM)
+- Wi-Fi coprocessor: `ESP32-C6` (ESP-Hosted / WiFi Remote over SDIO)
 - Audio codec: `ES8311`
-- RGB status LED (opcionalno): `HW‑478` (GPIO45/46/47)
-- SD kartica (opcionalno): lokalna glazba; WakeNet modeli u flashu (SD mode je opcionalan i ovisi o konfiguraciji)
+- RGB status LED (optional): `HW-478` (GPIO45/46/47)
+- SD card (optional): local music; WakeNet models in flash (SD mode is optional and depends on configuration)
 
-## Firmware platforma
+## Firmware platform
 
-- Framework: **ESP‑IDF** (projekt je konfiguriran za **ESP‑IDF 5.5.x**; vidi `sdkconfig.defaults`)
-- RTOS: **FreeRTOS** (taskovi + event loop + timeri)
+- Framework: **ESP-IDF** (project configured for **ESP-IDF 5.5.x**; see `sdkconfig.defaults`)
+- RTOS: **FreeRTOS** (tasks + event loop + timers)
 - Build: CMake (`CMakeLists.txt`, `main/CMakeLists.txt`)
 
-## Jezici i alati
+## Languages and tools
 
-- C (glavnina firmware-a)
-- Python skripte (build/flash i HA debug u `help_scripts/`)
-- Windows batch helperi (`build.bat`, `flash.bat`, `ota_server.bat`, `kill_monitor.bat`)
+- C (most of the firmware)
+- Python scripts (build/flash and HA debug in `help_scripts/`)
+- Windows batch helpers (`build.bat`, `flash.bat`, `ota_server.bat`, `kill_monitor.bat`)
 
-## Komponente i biblioteke (ESP Component Manager)
+## Components and libraries (ESP Component Manager)
 
-Definirano u `main/idf_component.yml`:
+Defined in `main/idf_component.yml`:
 
-- `espressif/esp-sr` – WakeNet9 + AFE (AEC/NS/AGC/VAD ovisno o konfiguraciji)
-- `espressif/esp_wifi_remote` – WiFi preko ESP32‑C6 (ESP‑Hosted)
-- `espressif/esp_websocket_client` – WebSocket klijent (Home Assistant Assist WS API)
-- `espressif/mdns` – mDNS (npr. resolve hostname-a)
-- `espressif/button` – button helperi
-- `espressif/led_strip` – LED strip driver (opcionalno / buduća upotreba)
+- `espressif/esp-sr` - WakeNet9 + AFE (AEC/NS/AGC/VAD depending on configuration)
+- `espressif/esp_wifi_remote` - WiFi via ESP32-C6 (ESP-Hosted)
+- `espressif/esp_websocket_client` - WebSocket client (Home Assistant Assist WS API)
+- `espressif/mdns` - mDNS (e.g., hostname resolution)
+- `espressif/button` - button helpers
+- `espressif/led_strip` - LED strip driver (optional / future use)
 
-Ostale ovisnosti (vidi `main/CMakeLists.txt` `REQUIRES` / `PRIV_REQUIRES`):
+Other dependencies (see `main/CMakeLists.txt` `REQUIRES` / `PRIV_REQUIRES`):
 
-- `mqtt` – ESP‑IDF MQTT client (MQTT Discovery + kontrolne teme)
-- `json` / `cJSON` – parsiranje/generiranje JSON-a (MQTT discovery payloadi, HA eventi)
-- `esp_http_server` – web dashboard + WebSerial
-- `esp_http_client`, `app_update`, `esp_https_ota` – OTA update
-- `nvs_flash` – NVS postavke i dijagnostika
+- `mqtt` - ESP-IDF MQTT client (MQTT Discovery + control topics)
+- `json` / `cJSON` - JSON parsing/generation (MQTT discovery payloads, HA events)
+- `esp_http_server` - web dashboard + WebSerial
+- `esp_http_client`, `app_update`, `esp_https_ota` - OTA update
+- `nvs_flash` - NVS settings and diagnostics
 - MP3/audio stack (managed components):
   - `chmorgan__esp-libhelix-mp3`
   - `chmorgan__esp-audio-player`
   - `chmorgan__esp-file-iterator`
 
-## Protokoli i integracije
+## Protocols and integrations
 
 ### Home Assistant (Assist Pipeline)
 
-- Transport: WebSocket (`/api/websocket`) preko `esp_websocket_client`
-- Tok: streaming audio prema HA + parsing eventa (npr. `tts-start`, `intent-end`)
-- Objave u HA (za vanjske prikaze tipa ESPHome CYD): `va_status` i `va_response` (MQTT senzori)
+- Transport: WebSocket (`/api/websocket`) via `esp_websocket_client`
+- Flow: streaming audio to HA + event parsing (e.g., `tts-start`, `intent-end`)
+- Publications in HA (for external displays like ESPHome CYD): `va_status` and `va_response` (MQTT sensors)
 
 ### MQTT (Home Assistant Discovery)
 
 - Discovery prefix: `homeassistant/.../config` (retain)
 - State/command prefix: `esp32p4/<entity>/{state|set}`
-- Tipovi entiteta: sensor, switch, number, text, button
+- Entity types: sensor, switch, number, text, button
 
-## Audio arhitektura
+## Audio architecture
 
-- Ulaz: mikrofon preko I2S/codec-a, 16 kHz mono (WakeNet9 zahtjev)
-- Obrada: AFE (AEC/NS/AGC/VAD) i wake word detekcija (WakeNet9)
-- Izlaz: TTS playback preko codec-a; lokalna glazba (MP3) preko audio playera
-- Upravljanje glasnoćom: runtime promjena + spremanje u NVS (HA slider `Output Volume`)
+- Input: microphone over I2S/codec, 16 kHz mono (WakeNet9 requirement)
+- Processing: AFE (AEC/NS/AGC/VAD) and wake word detection (WakeNet9)
+- Output: TTS playback via codec; local music (MP3) via audio player
+- Volume control: runtime changes + stored in NVS (HA slider `Output Volume`)
 
-## LED status i PWM
+## LED status and PWM
 
-- Driver: LEDC PWM (RGB kanali)
-- Modovi: `IDLE`, `LISTENING`, `PROCESSING`, `SPEAKING`, `OTA`, `ERROR`, `CONNECTING`
-- Konfiguracija polariteta:
-  - `LED_ACTIVE_LOW=0` za common‑GND (common‑cathode, active‑high)
-  - `LED_ACTIVE_LOW=1` za common‑3V3 (common‑anode, active‑low)
+- Driver: LEDC PWM (RGB channels)
+- Modes: `IDLE`, `LISTENING`, `PROCESSING`, `SPEAKING`, `OTA`, `ERROR`, `CONNECTING`
+- Polarity configuration:
+  - `LED_ACTIVE_LOW=0` for common-GND (common-cathode, active-high)
+  - `LED_ACTIVE_LOW=1` for common-3V3 (common-anode, active-low)
 
 ## OTA update
 
-- URL se postavlja kroz HA entitet (MQTT `text`) i start kroz HA button (MQTT `button`)
-- Download/flash: `esp_http_client` + `app_update`/`esp_https_ota` (omogućen i HTTP)
-- LED status tijekom OTA: `LED_STATUS_OTA`
+- URL is set via HA entity (MQTT `text`) and started via HA button (MQTT `button`)
+- Download/flash: `esp_http_client` + `app_update`/`esp_https_ota` (HTTP also enabled)
+- LED status during OTA: `LED_STATUS_OTA`
 
-## Postavke i persistent storage
+## Settings and persistent storage
 
-- NVS: `settings_manager` (Wi‑Fi, HA, MQTT, output volume)
-- Safe Mode / boot-loop zaštita: `sys_diag` (boot_count, reset reason, watchdog)
+- NVS: `settings_manager` (Wi-Fi, HA, MQTT, output volume)
+- Safe Mode / boot-loop protection: `sys_diag` (boot_count, reset reason, watchdog)
 
-## Web sučelje i debug
+## Web interface and debug
 
 - HTTP server: status/dashboard + WebSerial log stream
-- `help_scripts/`: skripte za čitanje HA state-a i logova preko WS API-ja (koriste lokalni `main/config.h`; tajne se ne commitaju)
+- `help_scripts/`: scripts to read HA state and logs over WS API (use local `main/config.h`; secrets are not committed)

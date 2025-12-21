@@ -1,65 +1,65 @@
-# Upute za spajanje na Home Assistant preko MCP-a
+# Instructions for connecting to Home Assistant via MCP
 
-Ovaj dokument opisuje provjereni postupak kako drugi AI agent može dohvatiti logove ili druge podatke iz Home Assistanta. Ovaj repozitorij ne sadrži MCP server skripte; koristi `help_scripts/` ili vlastiti MCP server ako ga već imaš.
+This document describes a proven procedure for another AI agent to fetch logs or other data from Home Assistant. This repo does not contain MCP server scripts; use `help_scripts/` or your own MCP server if you already have one.
 
-## 1. Preduvjeti
+## 1. Prerequisites
 
-- Instaliran MCP CLI za odgovarajući Python interpreter: `python -m pip install "mcp[cli]"`.
-- U Windows PowerShellu je dostupan Python 3.11 s `pip`-om (koristi se za skripte koje rade s Home Assistantom). WSL-ov `python3` u ovom okruženju nema `pip` ni `ensurepip`, pa ga ne koristi za dodatne pakete.
-- HA postavke su u `main/config.h` (lokalno, ne ide u git).
-- Za dohvat logova potreban je paket `websocket-client`: `python -m pip install --user websocket-client`.
+- MCP CLI installed for the correct Python interpreter: `python -m pip install "mcp[cli]"`.
+- Windows PowerShell has Python 3.11 with `pip` available (used for scripts that talk to Home Assistant). The WSL `python3` in this environment has no `pip` or `ensurepip`, so do not use it for extra packages.
+- HA settings are in `main/config.h` (local only, not committed).
+- To fetch logs, install `websocket-client`: `python -m pip install --user websocket-client`.
 
-## 2. Konfiguracija tajni
+## 2. Secrets configuration
 
-1. Otvori `main/config.h` i provjeri:
-   - `HA_HOST` / `HA_HOSTNAME`: npr. `<HA_IP>`.
+1. Open `main/config.h` and verify:
+   - `HA_HOST` / `HA_HOSTNAME`: e.g. `<HA_IP>`.
    - `HA_PORT`: `9000`.
-   - `HA_TOKEN`: valjani long-lived token (20+ znakova).
-   - `HA_USE_SSL`: `false` ako HA koristi HTTP.
-2. Vrijednosti se mogu privremeno nadjačati iz PowerShella:
+   - `HA_TOKEN`: valid long-lived token (20+ chars).
+   - `HA_USE_SSL`: `false` if HA uses HTTP.
+2. Values can be temporarily overridden in PowerShell:
    ```powershell
    $env:HOME_ASSISTANT_BASE_URL = 'https://example.local:9000'
    $env:HOME_ASSISTANT_TOKEN = 'xyz...'
    $env:HOME_ASSISTANT_VERIFY_SSL = '0'
    ```
-3. Ako koristiš WSL/Git Bash, pazi da `$HOME_ASSISTANT_BASE_URL` ne završi interpretiran kao binarka; zato postoji PowerShell primjer iznad.
+3. If you use WSL/Git Bash, make sure `$HOME_ASSISTANT_BASE_URL` is not interpreted as a binary; use the PowerShell example above.
 
-## 3. Pokretanje Home Assistant MCP servera
+## 3. Starting the Home Assistant MCP server
 
 ### 3.1 Bash/WSL
 
-Ovaj repo nema MCP server skripte. Ako koristiš vanjski MCP server, pokreni ga prema njegovim uputama.
+This repo does not include MCP server scripts. If you use an external MCP server, start it per its instructions.
 
 ### 3.2 Windows PowerShell
 
-Ako Git Bash ne vidi `mcp.exe`, pokreni server direktno (prema dokumentaciji MCP servera koji koristiš).
+If Git Bash cannot see `mcp.exe`, start the server directly (per the MCP server documentation you use).
 
-### 3.3 Pregled preko MCP Inspectora
+### 3.3 Inspecting via MCP Inspector
 
-U drugom terminalu:
+In another terminal:
 
 ```bash
 mcp dev <path_to_mcp_server_module>:server
 ```
 
-Konzola će ispisati lokalni URL i token za FastMCP Inspector; drži proces aktivnim dok pregledavaš.
+The console prints a local URL and token for FastMCP Inspector; keep the process running while you inspect.
 
-## 4. Tipični alati dostupni agentu
+## 4. Typical tools available to the agent
 
 - `list_home_assistant_entities(domain?, search?, limit?, attribute_filter?)`
 - `get_home_assistant_state(entity_id)`
 - `call_home_assistant_service(domain, service, entity_id?, service_data?)`
 
-Svi koriste REST API, pa je dovoljno imati valjane tajne.
+All use the REST API, so valid secrets are enough.
 
-## 5. Dohvat logova (WebSocket)
+## 5. Fetching logs (WebSocket)
 
-Home Assistant 2025.11.* više ne izlaže logove preko REST ruta (`/api/error_log`, `/api/system_log*` vraćaju 404). Za logove koristi WebSocket API `system_log/list`.
+Home Assistant 2025.11.* no longer exposes logs via REST (`/api/error_log`, `/api/system_log*` return 404). For logs, use the WebSocket API `system_log/list`.
 
-Primjer skripte iz PowerShella (čita `main/config.h`):
+Example PowerShell script (reads `main/config.h`):
 
 ```powershell
-@'
+@"
 import json
 import ssl
 from pathlib import Path
@@ -70,15 +70,15 @@ ROOT = Path('.').resolve()
 cfg = (ROOT / 'main' / 'config.h').read_text(encoding='utf-8', errors='replace')
 def define(name):
     import re
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+\"([^\"]*)\"', cfg, re.MULTILINE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+"([^"]*)"', cfg, re.MULTILINE)
     return m.group(1).strip() if m else None
 def define_int(name):
     import re
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+([0-9]+)', cfg, re.MULTILINE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+([0-9]+)', cfg, re.MULTILINE)
     return int(m.group(1)) if m else None
 def define_bool(name):
     import re
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
     if not m:
         return None
     return m.group(1).lower() in ('1', 'true')
@@ -106,27 +106,27 @@ ws.send(json.dumps({'id': 1, 'type': 'system_log/list'}))
 response = json.loads(ws.recv())
 print(json.dumps(response, indent=2))
 ws.close()
-'@ | python
+"@ | python
 ```
 
-Rezultat sadrži listu log zapisa (`name`, `message`, `level`, `source`, `timestamp`, `count`). Po potrebi filtriraj ili ispiši samo `response["result"]`.
+The result contains a list of log entries (`name`, `message`, `level`, `source`, `timestamp`, `count`). Filter as needed or print only `response["result"]`.
 
-## 6. Provjera povezivosti
+## 6. Connectivity check
 
-Brza REST provjera:
+Quick REST check:
 
 ```powershell
 python - <<'PY'
 import requests, re
 cfg = open('main/config.h', encoding='utf-8').read()
 def define(name):
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+\"([^\"]*)\"', cfg, re.MULTILINE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+"([^"]*)"', cfg, re.MULTILINE)
     return m.group(1).strip() if m else None
 def define_int(name):
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+([0-9]+)', cfg, re.MULTILINE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+([0-9]+)', cfg, re.MULTILINE)
     return int(m.group(1)) if m else None
 def define_bool(name):
-    m = re.search(rf'^\\s*#\\s*define\\s+{name}\\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
+    m = re.search(rf'^\s*#\s*define\s+{name}\s+(true|false|0|1)', cfg, re.MULTILINE | re.IGNORECASE)
     if not m:
         return None
     return m.group(1).lower() in ('1', 'true')
@@ -141,23 +141,23 @@ print(resp.status_code, resp.text)
 PY
 ```
 
-- Odgovor `200 {"message": "API running."}` potvrđuje da su URL, token i SSL postavke ispravni.
+- A `200 {"message": "API running."}` response confirms that the URL, token, and SSL settings are correct.
 
-## 7. Tipične poteškoće i rješenja
+## 7. Common issues and fixes
 
-| Problem | Uzrok | Rješenje |
+| Problem | Cause | Fix |
 | --- | --- | --- |
-| `mcp: not found` u WSL/Git Bash | `mcp.exe` je samo u Windows PATH-u | Pokreni direktno iz PowerShella ili dodaj Windows `mcp.exe` u WSL PATH |
-| REST `/api/error_log` vraća 404 | Endpoint uklonjen | Koristi WebSocket `system_log/list` kao gore |
-| `ModuleNotFoundError: websocket` | Paket nije instaliran | `python -m pip install --user websocket-client` (PowerShell) |
-| `python3 -m pip` u WSL javlja “No module named pip” | OS image bez ensurepip | Pokreći skripte koje trebaju dodatne pakete iz Windows Pythona |
-| SSL greške pri spajanju | Samopotpisani certifikat | Postavi `HA_USE_SSL` na `false` u `main/config.h` ili koristi validan certifikat |
+| `mcp: not found` in WSL/Git Bash | `mcp.exe` is only in Windows PATH | Run directly in PowerShell or add Windows `mcp.exe` to WSL PATH |
+| REST `/api/error_log` returns 404 | Endpoint removed | Use WebSocket `system_log/list` as above |
+| `ModuleNotFoundError: websocket` | Package not installed | `python -m pip install --user websocket-client` (PowerShell) |
+| `python3 -m pip` in WSL says "No module named pip" | OS image without ensurepip | Run scripts that need extra packages from Windows Python |
+| SSL errors when connecting | Self-signed certificate | Set `HA_USE_SSL` to `false` in `main/config.h` or use a valid cert |
 
-## 8. Što agent treba prijaviti korisniku
+## 8. What the agent should report to the user
 
-1. Koju je MCP komandu pokrenuo (`run-home-assistant-mcp.sh`, `mcp run ...`).
-2. Jesu li tajne uredno pročitane i jesu li varijable nadjačane.
-3. Sažetak logova (npr. broj zapisa i ključne greške).
-4. Svaki problem na koji je naišao (npr. nedostupan HA, nevažeći token).
+1. Which MCP command was run (`run-home-assistant-mcp.sh`, `mcp run ...`).
+2. Whether secrets were read correctly and whether variables were overridden.
+3. Log summary (e.g., number of entries and key errors).
+4. Any issues encountered (e.g., HA unavailable, invalid token).
 
-S ovim koracima drugi AI agent dobiva sve što treba da se pouzdano spoji na Home Assistant i interpretira logove putem MCP okvira.
+With these steps, another AI agent has everything needed to connect to Home Assistant and interpret logs reliably via MCP.

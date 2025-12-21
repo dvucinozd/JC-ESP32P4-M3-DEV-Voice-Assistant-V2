@@ -1,97 +1,107 @@
 # ESP32-P4 Voice Assistant (JC-ESP32P4-M3-DEV)
 
-Firmware za **JC-ESP32P4-M3-DEV** koji pretvara ESP32‑P4 u lokalni glasovni asistent za **Home Assistant Assist Pipeline** (WebSocket) uz **MQTT HA Discovery** za upravljanje i status.
+Firmware for **JC-ESP32P4-M3-DEV** that turns the ESP32-P4 into a local voice assistant for the **Home Assistant Assist Pipeline** (WebSocket) with **MQTT HA Discovery** for control and status.
 
-## Značajke
+## Features
 
-- Offline wake word (WakeNet9) na 16 kHz mono audio streamu (runtime podesiv prag).
-- HA Assist pipeline preko WebSocket: STT/intent/TTS eventi, streaming audio u oba smjera.
-- Lokalni MP3 player sa SD kartice + integracija sa voice pipeline (pauziranje/gašenje WWD tijekom glazbe).
-- Lokalni timer fallback (start iz STT teksta) radi i kad HA ne podrzava timere.
-- MQTT Home Assistant Discovery: senzori, prekidači i kontrole (LED, OTA, glasnoća, glazba).
-- OTA update: URL ulaz + okidač iz Home Assistanta (MQTT) + LED status tijekom OTA.
-- Safe Mode (boot‑loop zaštita) + watchdog + dijagnostika reset razloga.
-- Web dashboard + WebSerial (real‑time logovi).
+- Offline wake word (WakeNet9) on a 16 kHz mono audio stream (runtime-adjustable threshold).
+- HA Assist pipeline over WebSocket: STT/intent/TTS events, audio streaming both directions.
+- Local MP3 player from SD card + integration with the voice pipeline (pause/disable WWD during music).
+- Local timer fallback (start from STT text) works even when HA does not support timers.
+- MQTT Home Assistant Discovery: sensors, switches, and controls (LED, OTA, volume, music).
+- OTA update: URL input + trigger from Home Assistant (MQTT) + LED status during OTA.
+- Safe Mode (boot-loop protection) + watchdog + reset reason diagnostics.
+- Web dashboard + WebSerial (real-time logs).
 
-## Hardver
+## Hardware
 
-- Board: `JC-ESP32P4-M3-DEV` (ESP32‑P4 + ESP32‑C6 Wi‑Fi coprocessor preko SDIO).
+- Board: `JC-ESP32P4-M3-DEV` (ESP32-P4 + ESP32-C6 Wi-Fi coprocessor over SDIO).
 - Audio codec: `ES8311`.
-- RGB LED modul: `HW-478` (3 pina) na `GPIO45/46/47`.
+- RGB LED module: `HW-478` (3 pins) on `GPIO45/46/47`.
 
-### RGB LED (HW‑478) – važno
+### RGB LED (HW-478) - important
 
-Ako je **common spojen na GND** (common‑cathode), LED je **active‑high** i radi s default postavkom.
+If **common is tied to GND** (common-cathode), the LED is **active-high** and works with the default config.
 
-- Pinovi: `R=GPIO45`, `G=GPIO46`, `B=GPIO47`, `COM -> GND`
-- Ako koristiš **common‑anode** (COM -> 3V3), postavi `LED_ACTIVE_LOW=1` (vidi `main/led_status.h`).
+- Pins: `R=GPIO45`, `G=GPIO46`, `B=GPIO47`, `COM -> GND`
+- If you use **common-anode** (COM -> 3V3), set `LED_ACTIVE_LOW=1` (see `main/led_status.h`).
 
-## Konfiguracija (tajne ne idu u git)
+## Configuration (secrets do not go in git)
 
-`main/config.h` je u `.gitignore` i služi samo lokalno.
+`main/config.h` is in `.gitignore` and is local only.
 
-1. Kopiraj predložak: `main/config.h.example -> main/config.h`
-2. Upisi Wi‑Fi, HA i MQTT postavke.
-3. Na prvom bootu se vrijednosti spremaju u NVS (poslije se čitaju iz NVS).
+1. Copy template: `main/config.h.example -> main/config.h`
+2. Fill in Wi-Fi, HA, and MQTT settings.
+3. On first boot values are stored in NVS (later read from NVS).
+
+## Getting Started
+
+1. Activate the ESP-IDF 5.5 environment.
+2. Build the firmware: `python build.py`.
+3. Flash the board: `python flash.py -p COM13` (replace with your port).
+4. Open a monitor: `idf.py -p COM13 monitor` and wait for the ready message.
+5. In Home Assistant, enable MQTT integration and verify the new entities appear; then set `Wake Word Detection` and `Output Volume` to your preference.
+
+If you prefer OTA updates, see the OTA section below.
 
 ## Build / Flash (Windows)
 
-Preduvjet: aktiviran ESP‑IDF 5.5 environment.
+Prereq: ESP-IDF 5.5 environment activated.
 
 - Build: `python build.py`
 - Flash: `python flash.py -p COM13`
 - Monitor: `idf.py -p COM13 monitor`
-- Ako COM port ostane zaključan: `kill_monitor.bat` ili zatvoriti sve `idf.py monitor`/`esptool` procese.
+- If the COM port stays locked: `kill_monitor.bat` or close all `idf.py monitor`/`esptool` processes.
 
-OTA binarij: `build/esp32_p4_voice_assistant.bin`
+OTA binary: `build/esp32_p4_voice_assistant.bin`
 
-## OTA (lokalni server + HA)
+## OTA (local server + HA)
 
-1. Pokreni lokalni server: `ota_server.bat` (ili `python -m http.server 8080` iz root foldera).
-2. U Home Assistantu postavi `OTA URL` na `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin`.
-3. Pritisni `Start OTA`.
+1. Start a local server: `ota_server.bat` (or `python -m http.server 8080` from the repo root).
+2. In Home Assistant set `OTA URL` to `http://<PC_IP>:8080/build/esp32_p4_voice_assistant.bin`.
+3. Press `Start OTA`.
 
-Tijekom OTA LED status je `OTA` (bijelo brzo pulsiranje).
+During OTA, the LED status is `OTA` (white fast pulsing).
 
-## Home Assistant (MQTT Discovery entiteti)
+## Home Assistant (MQTT Discovery entities)
 
-Entiteti se pojave automatski (MQTT Discovery).
+Entities appear automatically (MQTT Discovery).
 
-- Senzori: `VA Status`, `VA Response`, `WiFi Signal` (RSSI dBm), `IP Address`, `Firmware Version`, `Free Memory`, `Uptime`, `Network Type`, `Music State`, `OTA Status/Progress`, `SD Card Status`, `WebSerial Requests`
-- Kontrole: `Wake Word Detection`, `Auto Gain Control`, `LED Status Indicator` (switch), `LED Brightness`, `Output Volume`, `AGC Target Level`, `WWD Detection Threshold`, `VAD` (threshold/silence/min/max)
+- Sensors: `VA Status`, `VA Response`, `WiFi Signal` (RSSI dBm), `IP Address`, `Firmware Version`, `Free Memory`, `Uptime`, `Network Type`, `Music State`, `OTA Status/Progress`, `SD Card Status`, `WebSerial Requests`
+- Controls: `Wake Word Detection`, `Auto Gain Control`, `LED Status Indicator` (switch), `LED Brightness`, `Output Volume`, `AGC Target Level`, `WWD Detection Threshold`, `VAD` (threshold/silence/min/max)
 - OTA: `OTA URL` (text), `Start OTA` (button)
 - Test/utility: `Test TTS`, `Restart Device`, `Play Music`/`Stop Music`, `LED Test`, `Diagnostic Dump` (button)
 
-`VA Status` i `VA Response` su namijenjeni i za prikaz na drugim uređajima (npr. ESPHome CYD ekran) preko HA entiteta.
+`VA Status` and `VA Response` are also intended for display on other devices (e.g., ESPHome CYD screen) via HA entities.
 
-## LED statusi
+## LED statuses
 
-LED statusi su implementirani u `main/led_status.c` i vezani uz VA/OTA događaje.
+LED statuses are implemented in `main/led_status.c` and tied to VA/OTA events.
 
-- `IDLE`: zeleno (dim)
-- `LISTENING`: plavo pulsiranje
-- `PROCESSING`: žuto blinkanje
-- `SPEAKING`: cijan brzo pulsiranje (od `tts-start`, prije download/playback)
-- `OTA`: bijelo brzo pulsiranje
-- `ERROR`: crveno brzo blinkanje (Safe Mode / error)
-- `CONNECTING`: plavo “breathing”
+- `IDLE`: green (dim)
+- `LISTENING`: blue pulsing
+- `PROCESSING`: yellow blinking
+- `SPEAKING`: cyan fast pulsing (from `tts-start`, before download/playback)
+- `OTA`: white fast pulsing
+- `ERROR`: red fast blinking (Safe Mode / error)
+- `CONNECTING`: blue breathing
 
 ## Troubleshooting
 
-- LED ode u crveno nakon ~1 minute: uređaj je ušao u Safe Mode (boot‑loop zaštita). Provjeriti serijski log; `main/sys_diag.c` sada koristi worker task (NVS se više ne dira iz timer callback‑a).
-- Ne vidiš MQTT entitete u HA: provjeri broker URI/cred u `main/config.h`/NVS i da je MQTT integracija u HA aktivna.
-- Dupli MQTT entiteti nakon promjena imena: reload MQTT integraciju u HA ili obriši retain discovery topic-e na brokeru.
-- Prejak zvuk: koristi `Output Volume` slider u HA (vrijednost se sprema u NVS).
+- LED turns red after ~1 minute: the device entered Safe Mode (boot-loop protection). Check the serial log; `main/sys_diag.c` now uses a worker task (NVS is no longer touched from the timer callback).
+- No MQTT entities in HA: verify broker URI/credentials in `main/config.h`/NVS and that MQTT integration in HA is enabled.
+- Duplicate MQTT entities after renaming: reload the MQTT integration in HA or clear retained discovery topics on the broker.
+- Too loud audio: use the `Output Volume` slider in HA (value is stored in NVS).
 
-## Pomoćne skripte
+## Helper scripts
 
-`help_scripts/` sadrži skripte za čitanje HA stanja/logova preko WebSocket API‑ja (token se uzima iz `main/config.h` lokalno). Najčešće: `list_ha_states_from_config.py` i `check_ha_logs_from_config.py`.
+`help_scripts/` contains scripts to read HA states/logs over the WebSocket API (token is read from `main/config.h` locally). Most used: `list_ha_states_from_config.py` and `check_ha_logs_from_config.py`.
 
-## Tehničke specifikacije
+## Technical specifications
 
-Detaljan popis tehnologija/komponenti je u `TECHNICAL_SPECIFICATIONS.md`.
+Detailed list of technologies/components is in `TECHNICAL_SPECIFICATIONS.md`.
 
-## Licence / Zasluge
+## License / Credits
 
-- ESP‑IDF / ESP‑SR / Home Assistant
-- Licenca: Apache-2.0 (vidi `LICENSE`)
+- ESP-IDF / ESP-SR / Home Assistant
+- License: Apache-2.0 (see `LICENSE`)
