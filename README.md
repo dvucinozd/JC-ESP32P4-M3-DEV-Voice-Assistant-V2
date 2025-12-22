@@ -24,6 +24,8 @@ Local voice assistant firmware for Home Assistant, built natively on ESP-IDF for
 
 ## 🧩 Hardware
 
+![JC-ESP32P4-M3-DEV (ESP32-P4) development board](docs/images/JC-ESP32P4-M3-DEV-ESP32-P4-evolution-board-e1752770810350.jpg)
+
 - Board: `JC-ESP32P4-M3-DEV` (Guition)
 - Wi-Fi coprocessor: ESP32-C6 (SDIO)
 - Audio codec: `ES8311` (mic + speaker)
