@@ -19,6 +19,7 @@
 static const char *TAG = "ota_update";
 
 #define OTA_TASK_STACK_WORDS 4096
+#define OTA_TASK_PRIORITY 2
 
 // OTA state
 static ota_state_t ota_state = OTA_STATE_IDLE;
@@ -323,7 +324,8 @@ esp_err_t ota_update_start(const char *url) {
 
   // Create OTA task
   BaseType_t ret = xTaskCreate(ota_update_task, "ota_update_task",
-                               OTA_TASK_STACK_WORDS, (void *)ctx, 5,
+                               OTA_TASK_STACK_WORDS, (void *)ctx,
+                               OTA_TASK_PRIORITY,
                                &ota_task_handle);
 
   if (ret != pdPASS) {
@@ -351,7 +353,7 @@ esp_err_t ota_update_start(const char *url) {
 
     ota_task_handle = xTaskCreateStaticPinnedToCore(
         ota_update_task, "ota_update_task", OTA_TASK_STACK_WORDS, (void *)ctx,
-        5, ctx->stack, ctx->tcb, tskNO_AFFINITY);
+        OTA_TASK_PRIORITY, ctx->stack, ctx->tcb, tskNO_AFFINITY);
     if (ota_task_handle == NULL) {
       ESP_LOGE(TAG, "Failed to create OTA task (static)");
       heap_caps_free(ctx->stack);

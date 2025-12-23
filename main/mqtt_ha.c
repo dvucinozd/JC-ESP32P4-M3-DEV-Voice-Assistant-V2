@@ -45,7 +45,7 @@ static mqtt_entity_t entities[MAX_ENTITIES];
 static int entity_count = 0;
 static bool legacy_cleanup_done = false;
 
-#define LEGACY_DISCOVERY_COUNT 14
+#define LEGACY_DISCOVERY_COUNT 20
 static const char *legacy_discovery_topics[LEGACY_DISCOVERY_COUNT] = {
     "homeassistant/button/esp32p4_voice_assistant/diag_dump/config",
     "homeassistant/button/esp32p4_voice_assistant/music_next/config",
@@ -60,7 +60,13 @@ static const char *legacy_discovery_topics[LEGACY_DISCOVERY_COUNT] = {
     "homeassistant/sensor/esp32p4_voice_assistant/webserial_clients/config",
     "homeassistant/switch/esp32p4_voice_assistant/agc_enabled/config",
     "homeassistant/switch/esp32p4_voice_assistant/led_enabled/config",
-    "homeassistant/switch/esp32p4_voice_assistant/webserial_enabled/config"
+    "homeassistant/switch/esp32p4_voice_assistant/webserial_enabled/config",
+    "homeassistant/sensor/esp32_p4_voice_assistant/ota_update_url/config",
+    "homeassistant/number/esp32_p4_voice_assistant/vad_max_recording_duration/config",
+    "homeassistant/number/esp32_p4_voice_assistant/vad_min_speech_duration/config",
+    "homeassistant/number/esp32_p4_voice_assistant/vad_silence_duration/config",
+    "homeassistant/sensor/esp32_p4_voice_assistant/wifi_signal/config",
+    "homeassistant/number/esp32_p4_voice_assistant/wwd_detection_threshold/config"
 };
 
 static void mqtt_ha_cleanup_legacy_discovery(void) {
