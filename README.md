@@ -39,6 +39,8 @@ Local voice assistant firmware for Home Assistant, built natively on ESP-IDF for
 This project uses the pinout from the bundled BSP component:
 `common_components/espressif__esp32_p4_function_ev_board/include/bsp/esp32_p4_function_ev_board.h`
 
+![JC-ESP32P4-M3-DEV pinout](docs/images/pinout.jpg)
+
 Audio (I2S + I2C):
 
 - I2S: `BCLK=GPIO12`, `MCLK=GPIO13`, `LRCLK=GPIO10`, `DOUT=GPIO9` (speaker), `DIN=GPIO48` (mic)
