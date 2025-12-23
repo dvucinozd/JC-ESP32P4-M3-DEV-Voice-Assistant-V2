@@ -28,6 +28,7 @@ static esp_websocket_client_handle_t ws_client = NULL;
 static bool ws_connected = false;
 static bool ws_authenticated = false;
 static int message_id = 1;
+static TaskHandle_t reconnect_task_handle = NULL;
 
 // Internal Config Storage
 static ha_client_config_t client_config;
@@ -331,10 +332,40 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
                     if (timer_started_this_conversation && conversation_callback) {
                         conversation_callback("", NULL);
                     }
+                    if (!timer_started_this_conversation && !speech_text_sent_this_run && conversation_callback) {
+                        // Ensure the client can return to idle if HA ends the run without any speech.
+                        conversation_callback("", NULL);
+                    }
                     ha_clear_audio_ready();
                 } else if (strcmp(evt_type->valuestring, "error") == 0) {
-                    // Error handling...
-                    if (error_callback) error_callback("error", "Pipeline Error");
+                    const char *err_code = "error";
+                    const char *err_msg = "Pipeline Error";
+
+                    if (data_obj) {
+                        cJSON *code_item = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "code");
+                        cJSON *msg_item = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "message");
+                        if (code_item && cJSON_IsString(code_item) && code_item->valuestring) {
+                            err_code = code_item->valuestring;
+                        }
+                        if (msg_item && cJSON_IsString(msg_item) && msg_item->valuestring) {
+                            err_msg = msg_item->valuestring;
+                        }
+
+                        cJSON *err_obj = cJSON_GetObjectItemCaseSensitive((cJSON *)data_obj, "error");
+                        if (err_obj && cJSON_IsObject(err_obj)) {
+                            cJSON *code2 = cJSON_GetObjectItemCaseSensitive(err_obj, "code");
+                            cJSON *msg2 = cJSON_GetObjectItemCaseSensitive(err_obj, "message");
+                            if (code2 && cJSON_IsString(code2) && code2->valuestring) {
+                                err_code = code2->valuestring;
+                            }
+                            if (msg2 && cJSON_IsString(msg2) && msg2->valuestring) {
+                                err_msg = msg2->valuestring;
+                            }
+                        }
+                    }
+
+                    ESP_LOGE(TAG, "HA pipeline error: %s: %s", err_code, err_msg);
+                    if (error_callback) error_callback(err_code, err_msg);
                     audio_capture_stop_wait(500);
                     ha_clear_audio_ready();
                 }
@@ -478,9 +509,13 @@ esp_err_t ha_client_request_tts(const char *text) {
     cJSON_AddItemToObject(root, "input", input);
     
     char *str = cJSON_PrintUnformatted(root);
-    esp_websocket_client_send_text(ws_client, str, strlen(str), pdMS_TO_TICKS(2000));
+    int ret = esp_websocket_client_send_text(ws_client, str, strlen(str), pdMS_TO_TICKS(2000));
     free(str);
     cJSON_Delete(root);
+    if (ret < 0) {
+        (void)ha_client_request_reconnect("request_tts send failed");
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
@@ -499,9 +534,13 @@ char* ha_client_start_conversation(void) {
     cJSON_AddItemToObject(root, "input", input);
     
     char *str = cJSON_PrintUnformatted(root);
-    esp_websocket_client_send_text(ws_client, str, strlen(str), pdMS_TO_TICKS(2000));
+    int ret = esp_websocket_client_send_text(ws_client, str, strlen(str), pdMS_TO_TICKS(2000));
     free(str);
     cJSON_Delete(root);
+    if (ret < 0) {
+        (void)ha_client_request_reconnect("start_conversation send failed");
+        return NULL;
+    }
     
     char *hid = malloc(32);
     snprintf(hid, 32, "run_%d", last_run_message_id);
@@ -524,15 +563,23 @@ esp_err_t ha_client_stream_audio(const uint8_t *audio_data, size_t length, const
     audio_frame_buf[0] = (uint8_t)stt_binary_handler_id;
     memcpy(audio_frame_buf+1, audio_data, length);
     
-    esp_websocket_client_send_bin(ws_client, (const char*)audio_frame_buf, needed, pdMS_TO_TICKS(HA_SEND_AUDIO_TIMEOUT_MS));
+    int ret = esp_websocket_client_send_bin(ws_client, (const char*)audio_frame_buf, needed, pdMS_TO_TICKS(HA_SEND_AUDIO_TIMEOUT_MS));
+    if (ret < 0) {
+        (void)ha_client_request_reconnect("stream_audio send failed");
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
 esp_err_t ha_client_end_audio_stream(void) {
-    if (!ha_client_is_connected() || stt_binary_handler_id < 0) return ESP_FAIL;
+    if (!ha_client_is_connected() || stt_binary_handler_id < 0) return ESP_ERR_INVALID_STATE;
     uint8_t b = (uint8_t)stt_binary_handler_id;
-    esp_websocket_client_send_bin(ws_client, (const char*)&b, 1, pdMS_TO_TICKS(HA_SEND_AUDIO_TIMEOUT_MS));
+    int ret = esp_websocket_client_send_bin(ws_client, (const char*)&b, 1, pdMS_TO_TICKS(HA_SEND_AUDIO_TIMEOUT_MS));
     ha_clear_audio_ready();
+    if (ret < 0) {
+        (void)ha_client_request_reconnect("end_audio_stream send failed");
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
@@ -552,4 +599,41 @@ void ha_client_stop(void) {
     ha_event_group = NULL;
     ws_connected = false;
     ws_authenticated = false;
+}
+
+static void ha_reconnect_task(void *arg) {
+    char *reason = (char *)arg;
+    if (reason && reason[0] != '\0') {
+        ESP_LOGW(TAG, "Reconnecting to Home Assistant: %s", reason);
+    } else {
+        ESP_LOGW(TAG, "Reconnecting to Home Assistant");
+    }
+    free(reason);
+
+    (void)ha_client_init(&client_config);
+
+    reconnect_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+esp_err_t ha_client_request_reconnect(const char *reason) {
+    if (reconnect_task_handle != NULL) return ESP_OK;
+
+    char *reason_copy = NULL;
+    if (reason) {
+        size_t n = strlen(reason) + 1;
+        reason_copy = malloc(n);
+        if (!reason_copy) return ESP_ERR_NO_MEM;
+        memcpy(reason_copy, reason, n);
+    }
+
+    TaskHandle_t task = NULL;
+    BaseType_t ok = xTaskCreate(ha_reconnect_task, "ha_reconnect", 6144, reason_copy, 4, &task);
+    if (ok != pdPASS) {
+        free(reason_copy);
+        return ESP_FAIL;
+    }
+
+    reconnect_task_handle = task;
+    return ESP_OK;
 }

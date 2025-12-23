@@ -67,6 +67,10 @@ static bool pending_timer_valid = false;
 static char last_stt_text[128];
 static bool timer_started_from_stt = false;
 
+#define HA_RESPONSE_TIMEOUT_MS 45000
+static TimerHandle_t ha_response_timeout_timer = NULL;
+static bool ha_response_waiting = false;
+
 static char *current_pipeline_handler = NULL;
 static int warmup_chunks_skip = 0;
 static bool tts_stream_active = false;
@@ -102,6 +106,10 @@ static int ascii_tolower_int(int c);
 static void local_timer_callback(TimerHandle_t timer);
 static void local_timer_start(uint32_t seconds);
 static void local_timer_stop(void);
+static void ha_pipeline_error_handler(const char *error_code, const char *error_message);
+static void ha_response_timeout_cb(TimerHandle_t timer);
+static void ha_response_timeout_start(void);
+static void ha_response_timeout_stop(void);
 static bool parse_timer_seconds_from_intent(const char *intent_data, uint32_t *out_seconds);
 static bool parse_duration_string_seconds(const char *text, uint32_t *out_seconds);
 static bool parse_iso8601_duration_seconds(const char *text, uint32_t *out_seconds);
@@ -137,6 +145,11 @@ esp_err_t voice_pipeline_init(void) {
     pipeline_cmd_queue = xQueueCreate(10, sizeof(pipeline_cmd_t));
     if (!pipeline_cmd_queue) return ESP_ERR_NO_MEM;
 
+    ha_response_timeout_timer =
+        xTimerCreate("ha_resp_to", pdMS_TO_TICKS(HA_RESPONSE_TIMEOUT_MS), pdFALSE, NULL,
+                     ha_response_timeout_cb);
+    if (!ha_response_timeout_timer) return ESP_ERR_NO_MEM;
+
     // Initialize Audio Capture (includes AFE/WWD/MultiNet)
     audio_capture_init();
     
@@ -147,6 +160,7 @@ esp_err_t voice_pipeline_init(void) {
     ha_client_register_intent_callback(intent_handler);
     ha_client_register_conversation_callback(conversation_response_handler);
     ha_client_register_stt_callback(stt_text_handler);
+    ha_client_register_error_callback(ha_pipeline_error_handler);
 
     // Register TTS callback
     tts_player_init();
@@ -380,6 +394,7 @@ static void pipeline_task(void *arg) {
 static void on_wake_word_detected(const int16_t *audio_data, size_t samples) {
     if (wake_detect_pending) return;
     wake_detect_pending = true;
+    ha_response_timeout_stop();
     timer_local_handled = false;
     suppress_tts_audio = false;
     pending_timer_valid = false;
@@ -406,13 +421,23 @@ static void vad_event_handler(audio_capture_vad_event_t event) {
         audio_capture_stop_wait(0);
         
         if (ha_client_is_connected()) {
-            ha_client_end_audio_stream();
-            led_status_set_guarded(LED_STATUS_PROCESSING);
-            oled_status_set_va_state(OLED_VA_PROCESSING);
-            oled_status_set_last_event("vad-end");
-            if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "OBRAĐUJEM...");
+            esp_err_t err = ha_client_end_audio_stream();
+            if (err == ESP_OK) {
+                led_status_set_guarded(LED_STATUS_PROCESSING);
+                oled_status_set_va_state(OLED_VA_PROCESSING);
+                oled_status_set_last_event("vad-end");
+                if (mqtt_ha_is_connected()) mqtt_ha_update_sensor("va_status", "OBRAĐUJEM...");
+                ha_response_timeout_start();
+            } else {
+                ESP_LOGW(TAG, "HA end_audio_stream failed: %s", esp_err_to_name(err));
+                (void)ha_client_request_reconnect("end_audio_stream failed");
+                ha_response_timeout_stop();
+                pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
+                pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+            }
         } else {
             ESP_LOGW(TAG, "HA not connected at speech end");
+            ha_response_timeout_stop();
             pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
             pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
         }
@@ -480,6 +505,7 @@ static esp_err_t start_audio_streaming(uint32_t max_recording_ms, const char *co
 
 static void on_tts_complete(void) {
     tts_stream_active = false;
+    ha_response_timeout_stop();
     oled_status_set_tts_state(OLED_TTS_IDLE);
     oled_status_set_last_event("tts-done");
     if (music_paused_for_tts) {
@@ -495,6 +521,7 @@ static void on_tts_complete(void) {
 }
 
 static void tts_audio_handler(const uint8_t *audio_data, size_t length) {
+    ha_response_timeout_stop();
     if (suppress_tts_audio) {
         if (audio_data == NULL || length == 0) {
             suppress_tts_audio = false;
@@ -531,6 +558,7 @@ static void conversation_response_handler(const char *response_text, const char 
         pending_timer_valid = false;
         suppress_tts_audio = true;
         followup_vad_pending = false;
+        ha_response_timeout_stop();
         pipeline_post_cmd(PIPELINE_CMD_CONFIRM_BEEP, 0);
         pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
         return;
@@ -540,6 +568,7 @@ static void conversation_response_handler(const char *response_text, const char 
         timer_local_handled = false;
         suppress_tts_audio = true;
         followup_vad_pending = false;
+        ha_response_timeout_stop();
         oled_status_set_response_preview("TIMER");
         if (mqtt_ha_is_connected()) {
             mqtt_ha_update_sensor("va_response", local_timer_seconds > 0 ? "TIMER POSTAVLJEN" : "TIMER");
@@ -554,6 +583,7 @@ static void conversation_response_handler(const char *response_text, const char 
         ESP_LOGI(TAG, "HA asked for music selection; playing local SD music");
         suppress_tts_audio = true;
         followup_vad_pending = false;
+        ha_response_timeout_stop();
         oled_status_set_response_preview("GLAZBA");
         handle_local_music_play();
         if (mqtt_ha_is_connected()) {
@@ -576,8 +606,50 @@ static void conversation_response_handler(const char *response_text, const char 
     oled_status_set_response_preview(response_text ? response_text : "");
     
     if (!response_text || strlen(response_text) == 0) {
+        ha_response_timeout_stop();
         pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
     }
+}
+
+static void ha_pipeline_error_handler(const char *error_code, const char *error_message) {
+    ESP_LOGE(TAG, "HA pipeline error: %s: %s", error_code ? error_code : "?", error_message ? error_message : "?");
+    ha_response_timeout_stop();
+    led_status_set_guarded(LED_STATUS_ERROR);
+    oled_status_set_va_state(OLED_VA_ERROR);
+    oled_status_set_last_event("ha-err");
+    if (mqtt_ha_is_connected()) {
+        mqtt_ha_update_sensor("va_status", "GRESKA");
+        mqtt_ha_update_sensor("va_response", error_message ? error_message : "HA ERROR");
+    }
+    pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
+    pipeline_post_cmd(PIPELINE_CMD_ERROR_RESUME, 0);
+}
+
+static void ha_response_timeout_cb(TimerHandle_t timer) {
+    (void)timer;
+    if (!ha_response_waiting) return;
+    ha_response_waiting = false;
+    ESP_LOGW(TAG, "HA response timeout");
+    oled_status_set_last_event("ha-to");
+    if (mqtt_ha_is_connected()) {
+        mqtt_ha_update_sensor("va_status", "GRESKA");
+        mqtt_ha_update_sensor("va_response", "HA TIMEOUT");
+    }
+    pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
+    pipeline_post_cmd(PIPELINE_CMD_ERROR_RESUME, 0);
+}
+
+static void ha_response_timeout_start(void) {
+    if (!ha_response_timeout_timer) return;
+    ha_response_waiting = true;
+    xTimerStop(ha_response_timeout_timer, 0);
+    xTimerStart(ha_response_timeout_timer, 0);
+}
+
+static void ha_response_timeout_stop(void) {
+    ha_response_waiting = false;
+    if (!ha_response_timeout_timer) return;
+    xTimerStop(ha_response_timeout_timer, 0);
 }
 
 static void intent_handler(const char *intent_name, const char *intent_data, const char *conversation_id) {

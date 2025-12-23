@@ -97,6 +97,17 @@ esp_err_t ha_client_stream_audio(const uint8_t *audio_data, size_t length, const
 esp_err_t ha_client_end_audio_stream(void);
 
 /**
+ * @brief Request a Home Assistant reconnect (non-blocking).
+ *
+ * Useful when the connection looks "up" but streaming/control messages fail
+ * (e.g., after long idle periods).
+ *
+ * @param reason Optional short reason for logging (can be NULL).
+ * @return ESP_OK on success
+ */
+esp_err_t ha_client_request_reconnect(const char *reason);
+
+/**
  * @brief Callback for conversation responses from HA
  *
  * @param response_text TTS response text from Home Assistant
