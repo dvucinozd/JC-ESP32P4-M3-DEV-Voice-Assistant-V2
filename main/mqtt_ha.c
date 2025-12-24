@@ -62,12 +62,14 @@ static const char *legacy_discovery_topics[LEGACY_DISCOVERY_COUNT] = {
     "homeassistant/switch/esp32p4_voice_assistant/led_enabled/config",
     "homeassistant/switch/esp32p4_voice_assistant/webserial_enabled/config",
     "homeassistant/sensor/esp32_p4_voice_assistant/ota_update_url/config",
-    "homeassistant/number/esp32_p4_voice_assistant/vad_max_recording_duration/config",
-    "homeassistant/number/esp32_p4_voice_assistant/vad_min_speech_duration/config",
+    "homeassistant/number/esp32_p4_voice_assistant/vad_max_recording_duration/"
+    "config",
+    "homeassistant/number/esp32_p4_voice_assistant/vad_min_speech_duration/"
+    "config",
     "homeassistant/number/esp32_p4_voice_assistant/vad_silence_duration/config",
     "homeassistant/sensor/esp32_p4_voice_assistant/wifi_signal/config",
-    "homeassistant/number/esp32_p4_voice_assistant/wwd_detection_threshold/config"
-};
+    "homeassistant/number/esp32_p4_voice_assistant/wwd_detection_threshold/"
+    "config"};
 
 static void mqtt_ha_cleanup_legacy_discovery(void) {
   if (!mqtt_client || legacy_cleanup_done) {
@@ -75,12 +77,13 @@ static void mqtt_ha_cleanup_legacy_discovery(void) {
   }
 
   for (int i = 0; i < LEGACY_DISCOVERY_COUNT; i++) {
-    int msg_id = esp_mqtt_client_publish(mqtt_client, legacy_discovery_topics[i],
-                                         "", 0, 1, 1 /* retain */);
+    int msg_id = esp_mqtt_client_publish(
+        mqtt_client, legacy_discovery_topics[i], "", 0, 1, 1 /* retain */);
     if (msg_id >= 0) {
       ESP_LOGI(TAG, "Cleared legacy discovery: %s", legacy_discovery_topics[i]);
     } else {
-      ESP_LOGW(TAG, "Failed to clear legacy discovery: %s", legacy_discovery_topics[i]);
+      ESP_LOGW(TAG, "Failed to clear legacy discovery: %s",
+               legacy_discovery_topics[i]);
     }
   }
 
@@ -105,9 +108,8 @@ static esp_err_t publish_discovery_payload(const mqtt_entity_t *ent) {
   char topic[128];
   build_discovery_topic(ent->component, ent->entity_id, topic, sizeof(topic));
 
-  int msg_id =
-      esp_mqtt_client_publish(mqtt_client, topic, ent->discovery_payload, 0, 1,
-                             1 /* retain */);
+  int msg_id = esp_mqtt_client_publish(
+      mqtt_client, topic, ent->discovery_payload, 0, 1, 1 /* retain */);
   return (msg_id >= 0) ? ESP_OK : ESP_FAIL;
 }
 
@@ -156,7 +158,8 @@ static cJSON *build_device_json(void) {
   cJSON_AddStringToObject(device, "model", DEVICE_MODEL);
   cJSON_AddStringToObject(device, "manufacturer", DEVICE_MANUFACTURER);
   const esp_app_desc_t *app_desc = esp_app_get_description();
-  cJSON_AddStringToObject(device, "sw_version", app_desc ? app_desc->version : "unknown");
+  cJSON_AddStringToObject(device, "sw_version",
+                          app_desc ? app_desc->version : "unknown");
 
   return device;
 }
@@ -193,7 +196,8 @@ static esp_err_t publish_discovery(const char *component, const char *entity_id,
     return ESP_FAIL;
   }
 
-  strncpy(entities[idx].component, component, sizeof(entities[idx].component) - 1);
+  strncpy(entities[idx].component, component,
+          sizeof(entities[idx].component) - 1);
   entities[idx].component[sizeof(entities[idx].component) - 1] = '\0';
 
   if (entities[idx].discovery_payload) {
@@ -202,8 +206,8 @@ static esp_err_t publish_discovery(const char *component, const char *entity_id,
   entities[idx].discovery_payload = json_str;
 
   if (!mqtt_connected) {
-    ESP_LOGI(TAG, "MQTT not connected yet; queued discovery for %s/%s", component,
-             entity_id);
+    ESP_LOGI(TAG, "MQTT not connected yet; queued discovery for %s/%s",
+             component, entity_id);
     return ESP_OK;
   }
 
@@ -371,7 +375,8 @@ esp_err_t mqtt_ha_register_sensor(const char *entity_id, const char *name,
   cJSON_AddStringToObject(config, "name", name);
 
   char default_entity_id[64];
-  snprintf(default_entity_id, sizeof(default_entity_id), "sensor.%s", entity_id);
+  snprintf(default_entity_id, sizeof(default_entity_id), "sensor.%s",
+           entity_id);
   cJSON_AddStringToObject(config, "default_entity_id", default_entity_id);
 
   char unique_id[64];
@@ -402,6 +407,8 @@ esp_err_t mqtt_ha_register_switch(const char *entity_id, const char *name,
   // Store entity
   strncpy(entities[entity_count].entity_id, entity_id,
           sizeof(entities[entity_count].entity_id) - 1);
+  entities[entity_count]
+      .entity_id[sizeof(entities[entity_count].entity_id) - 1] = '\0';
   entities[entity_count].type = MQTT_HA_SWITCH;
   entities[entity_count].callback = callback;
   entity_count++;
@@ -411,7 +418,8 @@ esp_err_t mqtt_ha_register_switch(const char *entity_id, const char *name,
   cJSON_AddStringToObject(config, "name", name);
 
   char default_entity_id[64];
-  snprintf(default_entity_id, sizeof(default_entity_id), "switch.%s", entity_id);
+  snprintf(default_entity_id, sizeof(default_entity_id), "switch.%s",
+           entity_id);
   cJSON_AddStringToObject(config, "default_entity_id", default_entity_id);
 
   char unique_id[64];
@@ -449,6 +457,8 @@ esp_err_t mqtt_ha_register_number(const char *entity_id, const char *name,
   // Store entity
   strncpy(entities[entity_count].entity_id, entity_id,
           sizeof(entities[entity_count].entity_id) - 1);
+  entities[entity_count]
+      .entity_id[sizeof(entities[entity_count].entity_id) - 1] = '\0';
   entities[entity_count].type = MQTT_HA_NUMBER;
   entities[entity_count].callback = callback;
   entity_count++;
@@ -458,7 +468,8 @@ esp_err_t mqtt_ha_register_number(const char *entity_id, const char *name,
   cJSON_AddStringToObject(config, "name", name);
 
   char default_entity_id[64];
-  snprintf(default_entity_id, sizeof(default_entity_id), "number.%s", entity_id);
+  snprintf(default_entity_id, sizeof(default_entity_id), "number.%s",
+           entity_id);
   cJSON_AddStringToObject(config, "default_entity_id", default_entity_id);
 
   char unique_id[64];
@@ -503,6 +514,8 @@ esp_err_t mqtt_ha_register_select(const char *entity_id, const char *name,
   // Store entity
   strncpy(entities[entity_count].entity_id, entity_id,
           sizeof(entities[entity_count].entity_id) - 1);
+  entities[entity_count]
+      .entity_id[sizeof(entities[entity_count].entity_id) - 1] = '\0';
   entities[entity_count].type = MQTT_HA_SELECT;
   entities[entity_count].callback = callback;
   entity_count++;
@@ -512,7 +525,8 @@ esp_err_t mqtt_ha_register_select(const char *entity_id, const char *name,
   cJSON_AddStringToObject(config, "name", name);
 
   char default_entity_id[64];
-  snprintf(default_entity_id, sizeof(default_entity_id), "select.%s", entity_id);
+  snprintf(default_entity_id, sizeof(default_entity_id), "select.%s",
+           entity_id);
   cJSON_AddStringToObject(config, "default_entity_id", default_entity_id);
 
   char unique_id[64];
@@ -559,6 +573,8 @@ esp_err_t mqtt_ha_register_button(const char *entity_id, const char *name,
   // Store entity
   strncpy(entities[entity_count].entity_id, entity_id,
           sizeof(entities[entity_count].entity_id) - 1);
+  entities[entity_count]
+      .entity_id[sizeof(entities[entity_count].entity_id) - 1] = '\0';
   entities[entity_count].type = MQTT_HA_BUTTON;
   entities[entity_count].callback = callback;
   entity_count++;
@@ -568,7 +584,8 @@ esp_err_t mqtt_ha_register_button(const char *entity_id, const char *name,
   cJSON_AddStringToObject(config, "name", name);
 
   char default_entity_id[64];
-  snprintf(default_entity_id, sizeof(default_entity_id), "button.%s", entity_id);
+  snprintf(default_entity_id, sizeof(default_entity_id), "button.%s",
+           entity_id);
   cJSON_AddStringToObject(config, "default_entity_id", default_entity_id);
 
   char unique_id[64];
@@ -626,6 +643,8 @@ esp_err_t mqtt_ha_register_text(const char *entity_id, const char *name,
   // Store entity
   strncpy(entities[entity_count].entity_id, entity_id,
           sizeof(entities[entity_count].entity_id) - 1);
+  entities[entity_count]
+      .entity_id[sizeof(entities[entity_count].entity_id) - 1] = '\0';
   entities[entity_count].type = MQTT_HA_SENSOR; // Use sensor type for text
   entities[entity_count].callback = callback;
   entity_count++;
