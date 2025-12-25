@@ -24,6 +24,11 @@ Recent fixes (Dec 25, 2025)
     - Fixed issue where voice-triggered "Play Music" command would hang the system.
     - Implemented `PIPELINE_CMD_MUSIC_CONTROL` to safely stop the microphone and wait for resource release before starting music playback.
 
+### Stability Improvements (v0.2.2)
+- **Voice Pipeline**:
+    - Increased `pipeline_task` stack size from 4KB to 8KB to prevent stack overflow crashes during music playback (file I/O + codec operations).
+    - Added watchdog feeding (`sys_diag_wdt_feed()`) during heavy music initialization steps to prevent WDT resets.
+
 Recent fixes (Dec 24, 2025)
 ---------------------------
 ### Comprehensive Bug Fixes (v0.1.9)

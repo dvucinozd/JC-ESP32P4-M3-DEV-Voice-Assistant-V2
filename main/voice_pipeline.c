@@ -198,7 +198,8 @@ esp_err_t voice_pipeline_init(void) {
   tts_player_register_complete_callback(on_tts_complete);
 
   // Start the manager task
-  xTaskCreate(pipeline_task, "voice_pipeline", 4096, NULL, 5,
+  // Start the manager task
+  xTaskCreate(pipeline_task, "voice_pipeline", 8192, NULL, 5,
               &pipeline_task_handle);
 
   return ESP_OK;
@@ -418,16 +419,20 @@ static void pipeline_task(void *arg) {
 
       case PIPELINE_CMD_MUSIC_CONTROL:
         ESP_LOGI(TAG, "Pipeline Music Control: Stopping WWD/Mic first...");
+        sys_diag_wdt_feed(); // Feed before heavy operation
+
         // 1. Stop Microphone / WWD
         audio_capture_stop_wait(500);
         is_wwd_running = false;
 
         // 2. Wait a bit for I2S cleanup
+        sys_diag_wdt_feed();
         vTaskDelay(pdMS_TO_TICKS(150));
 
         // 3. Execute Music Command (0=Play, 1=Stop)
         if (cmd.data == 0) {
           ESP_LOGI(TAG, "Starting Music Player...");
+          sys_diag_wdt_feed(); // Feed just before play which does I/O
           if (local_music_player_is_initialized()) {
             local_music_player_play();
           } else {
@@ -442,6 +447,7 @@ static void pipeline_task(void *arg) {
           // For STOP, we usually want to resume listening after
           pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
         }
+        sys_diag_wdt_feed();
         break;
 
       default:
