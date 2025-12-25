@@ -873,8 +873,12 @@ static void handle_local_music_play(void) {
   if (state == MUSIC_STATE_PAUSED) {
     // Resume requires stopping WWD too if we want to be safe,
     // but often resume is instant. Let's use safe path anyway.
+    suppress_tts_audio =
+        true; // Prevent HA saying "Playing music" while we switch codecs
     pipeline_post_cmd(PIPELINE_CMD_MUSIC_CONTROL, 0);
   } else if (state != MUSIC_STATE_PLAYING) {
+    suppress_tts_audio =
+        true; // Prevent HA saying "Playing music" while we switch codecs
     pipeline_post_cmd(PIPELINE_CMD_MUSIC_CONTROL, 0);
   }
 }

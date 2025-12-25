@@ -34,6 +34,10 @@ Recent fixes (Dec 25, 2025)
     - Further increased `pipeline_task` stack size to 12KB. 8KB proved insufficient for simultaneous file operations and text-to-speech handling.
     - Added `audio_capture_stop_wait` during initialization to ensure clean audio state.
 
+### Music/TTS Conflict Fix (v0.2.4)
+- **Voice Pipeline**:
+    - Implemented TTS suppression when music command is detected. This prevents Home Assistant's TTS ("Playing music") from conflicting with the music player's codec usage, which was causing the device to hang/block.
+
 Recent fixes (Dec 24, 2025)
 ---------------------------
 ### Comprehensive Bug Fixes (v0.1.9)
