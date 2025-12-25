@@ -38,6 +38,10 @@ Recent fixes (Dec 25, 2025)
 - **Voice Pipeline**:
     - Implemented TTS suppression when music command is detected. This prevents Home Assistant's TTS ("Playing music") from conflicting with the music player's codec usage, which was causing the device to hang/block.
 
+### Internal RAM Fix (v0.2.5)
+- **Voice Pipeline**:
+    - Moved `pipeline_task` stack allocation from internal RAM to PSRAM. The 12KB stack was exhausting internal RAM, causing MQTT/network failures ("out of memory", "thread_sem_init: out of memory").
+
 Recent fixes (Dec 24, 2025)
 ---------------------------
 ### Comprehensive Bug Fixes (v0.1.9)

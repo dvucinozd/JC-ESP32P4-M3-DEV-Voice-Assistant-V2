@@ -66,6 +66,11 @@ typedef struct {
 static QueueHandle_t pipeline_cmd_queue = NULL;
 static TaskHandle_t pipeline_task_handle = NULL;
 
+// PSRAM stack for pipeline_task (saves ~12KB internal RAM)
+#define PIPELINE_TASK_STACK_SIZE 12288
+static StackType_t *pipeline_task_stack = NULL;
+static StaticTask_t pipeline_task_tcb;
+
 // State variables
 static bool is_wwd_running = false;
 static bool is_pipeline_active = false;
@@ -198,10 +203,24 @@ esp_err_t voice_pipeline_init(void) {
   ha_client_register_tts_audio_callback(tts_audio_handler);
   tts_player_register_complete_callback(on_tts_complete);
 
-  // Start the manager task
-  // Start the manager task
-  xTaskCreate(pipeline_task, "voice_pipeline", 12288, NULL, 5,
-              &pipeline_task_handle);
+  // Allocate pipeline_task stack from PSRAM to save internal RAM
+  if (!pipeline_task_stack) {
+    pipeline_task_stack = (StackType_t *)heap_caps_malloc(
+        PIPELINE_TASK_STACK_SIZE * sizeof(StackType_t), MALLOC_CAP_SPIRAM);
+    if (!pipeline_task_stack) {
+      ESP_LOGE(TAG, "Failed to allocate pipeline_task stack from PSRAM");
+      return ESP_ERR_NO_MEM;
+    }
+  }
+
+  // Start the manager task with PSRAM stack
+  pipeline_task_handle = xTaskCreateStatic(
+      pipeline_task, "voice_pipeline", PIPELINE_TASK_STACK_SIZE, NULL, 5,
+      pipeline_task_stack, &pipeline_task_tcb);
+  if (!pipeline_task_handle) {
+    ESP_LOGE(TAG, "Failed to create pipeline_task");
+    return ESP_FAIL;
+  }
 
   return ESP_OK;
 }
