@@ -19,6 +19,11 @@ Recent fixes (Dec 25, 2025)
     - Increased `pipeline_cmd_queue` send timeout from 0 to 100ms to prevent dropping critical commands (like STOP_WWD) when the system is busy.
     - Improved robustness of music pipeline switching logic.
 
+### Voice-Triggered Music Fix (v0.2.1)
+- **Voice Pipeline**:
+    - Fixed issue where voice-triggered "Play Music" command would hang the system.
+    - Implemented `PIPELINE_CMD_MUSIC_CONTROL` to safely stop the microphone and wait for resource release before starting music playback.
+
 Recent fixes (Dec 24, 2025)
 ---------------------------
 ### Comprehensive Bug Fixes (v0.1.9)

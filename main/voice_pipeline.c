@@ -416,6 +416,34 @@ static void pipeline_task(void *arg) {
         oled_status_set_last_event("err");
         break;
 
+      case PIPELINE_CMD_MUSIC_CONTROL:
+        ESP_LOGI(TAG, "Pipeline Music Control: Stopping WWD/Mic first...");
+        // 1. Stop Microphone / WWD
+        audio_capture_stop_wait(500);
+        is_wwd_running = false;
+
+        // 2. Wait a bit for I2S cleanup
+        vTaskDelay(pdMS_TO_TICKS(150));
+
+        // 3. Execute Music Command (0=Play, 1=Stop)
+        if (cmd.data == 0) {
+          ESP_LOGI(TAG, "Starting Music Player...");
+          if (local_music_player_is_initialized()) {
+            local_music_player_play();
+          } else {
+            ESP_LOGW(TAG, "Music player not initialized!");
+            pipeline_post_cmd(PIPELINE_CMD_ERROR_BEEP, 0);
+          }
+        } else {
+          ESP_LOGI(TAG, "Stopping Music Player...");
+          if (local_music_player_is_initialized()) {
+            local_music_player_stop();
+          }
+          // For STOP, we usually want to resume listening after
+          pipeline_post_cmd(PIPELINE_CMD_RESUME_WWD, 0);
+        }
+        break;
+
       default:
         break;
       }
@@ -836,9 +864,11 @@ static void handle_local_music_play(void) {
 
   music_state_t state = local_music_player_get_state();
   if (state == MUSIC_STATE_PAUSED) {
-    local_music_player_resume();
+    // Resume requires stopping WWD too if we want to be safe,
+    // but often resume is instant. Let's use safe path anyway.
+    pipeline_post_cmd(PIPELINE_CMD_MUSIC_CONTROL, 0);
   } else if (state != MUSIC_STATE_PLAYING) {
-    local_music_player_play();
+    pipeline_post_cmd(PIPELINE_CMD_MUSIC_CONTROL, 0);
   }
 }
 
